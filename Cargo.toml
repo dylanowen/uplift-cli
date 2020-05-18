@@ -9,10 +9,38 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "uplift"
+path = "src/main.rs"
+
+[workspace]
+
+members = [
+  "corebluetooth-sys"
+]
+
 [dependencies]
 log = "0.4"
 env_logger = "0.7"
 lazy_static = "1.4"
 
-btleplug = { path = "../btleplug" }
-uuid = "0.8.1"
+# async
+tokio = { version = "0.2", features = ["blocking", "macros", "rt-threaded", "time"] }
+futures = "0.3"
+
+# ObjectiveC interface
+corebluetooth-sys = { path = "corebluetooth-sys" }
+objc = "0.2"
+#cocoa = "0.20"
+
+# Bluetooth support
+uuid = "0.8"
+regex = "1"
+
+# Command line parsing
+clap = "2.33.1"
+
+#btleplug = { path = "../btleplug" }
+#uuid = "0.8.1"
+
+#mach_object = "0.1"
