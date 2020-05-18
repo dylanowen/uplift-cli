@@ -114,8 +114,11 @@ impl Desk {
 
         desk.peripheral.subscribe(&desk.data_out_characteristic);
 
-        // just connected so send an initial query
-        desk.query().await?;
+        // just connected so make sure we have a height
+        while desk.height() <= 0 {
+            desk.query().await?;
+            time::delay_for(Duration::from_millis(100)).await;
+        }
 
         Ok(desk)
     }
@@ -173,9 +176,6 @@ impl Desk {
         )
         .await?;
 
-        // self.query().await?;
-        // println!("{:?}", self.data_out_characteristic);
-
         Ok(())
     }
 
@@ -190,7 +190,7 @@ impl Desk {
         .await
     }
 
-    async fn query(&mut self) -> Result<(), UpliftError> {
+    pub async fn query(&mut self) -> Result<(), UpliftError> {
         Self::write(
             &mut self.peripheral,
             &self.data_in_characteristic,

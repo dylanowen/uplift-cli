@@ -31,8 +31,6 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), UpliftError> {
-    //env_logger::init_from_env(Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "trace"));
-
     let matches = App::new("uplift-cli")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg(
@@ -44,12 +42,13 @@ async fn main() -> Result<(), UpliftError> {
         )
         .arg(
             Arg::with_name("log-style")
-                .long("log-lestylevel")
+                .long("log-style")
                 .help("Set the environment log style")
                 .env(env_logger::DEFAULT_WRITE_STYLE_ENV),
         )
         .subcommand(SubCommand::with_name("listen"))
         .subcommand(SubCommand::with_name("set").arg(Arg::with_name("height").required(true)))
+        .subcommand(SubCommand::with_name("query"))
         .get_matches();
 
     setup_logging(&matches)?;
@@ -83,6 +82,14 @@ async fn main() -> Result<(), UpliftError> {
             {
                 warn!("Ran out of time to move the desk")
             }
+        }
+        ("query", _) => {
+            while desk.height() <= 0 {
+                desk.query().await?;
+                time::delay_for(Duration::from_millis(100)).await;
+            }
+
+            println!("{}", desk.height());
         }
         _ => unreachable!(),
     }
