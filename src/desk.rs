@@ -1,7 +1,10 @@
+use core::cmp;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use tokio::time;
@@ -9,13 +12,15 @@ use tokio::time;
 use crate::bluetooth::{Advertisement, CentralManager, CentralManagerEvent, Delegated, Peripheral};
 use crate::bluetooth::{Characteristic, UUID};
 use crate::UpliftError;
-use core::cmp;
-use std::sync::Arc;
-use std::time::Duration;
 
-const QUERY_PACKET: [u8; 6] = [0xf1, 0xf1, 0x07, 0x00, 0x07, 0x7e];
 const UP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x01, 0x00, 0x01, 0x7e];
 const DOWN_PACKET: [u8; 6] = [0xf1, 0xf1, 0x02, 0x00, 0x02, 0x7e];
+const SAVE_SIT_PACKET: [u8; 6] = [0xf1, 0xf1, 0x03, 0x00, 0x03, 0x7e];
+const SAVE_STAND_PACKET: [u8; 6] = [0xf1, 0xf1, 0x04, 0x00, 0x04, 0x7e];
+const SIT_PACKET: [u8; 6] = [0xf1, 0xf1, 0x05, 0x00, 0x05, 0x7e];
+const STAND_PACKET: [u8; 6] = [0xf1, 0xf1, 0x06, 0x00, 0x06, 0x7e];
+// const STOP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x02, 0x00, 0x2b, 0x7e];
+const QUERY_PACKET: [u8; 6] = [0xf1, 0xf1, 0x07, 0x00, 0x07, 0x7e];
 
 lazy_static! {
     pub static ref DESK_SERVICE_UUID: UUID = UUID::parse("ff12").unwrap();
@@ -114,11 +119,8 @@ impl Desk {
 
         desk.peripheral.subscribe(&desk.data_out_characteristic);
 
-        // just connected so make sure we have a height
-        while desk.height() <= 0 {
-            desk.query().await?;
-            time::delay_for(Duration::from_millis(100)).await;
-        }
+        // just connected so ask for our height
+        desk.query().await?;
 
         Ok(desk)
     }
@@ -134,33 +136,50 @@ impl Desk {
         )
     }
 
-    pub async fn set_height(&mut self, height: isize) -> Result<(), UpliftError> {
-        // let mut last_height = self.height();
-        // wait till we know a height to start our move
-        // while last_height < 0 {
-        //     last_height = self.height();
-        //     time::delay_for(Duration::from_millis(100)).await;
-        // }
+    /// This function doesn't work that well, we spend too much back and forth trying to get the
+    /// desk just right
+    pub async fn set_height(&mut self, goal_height: isize) -> Result<(), UpliftError> {
+        const DELAY: u64 = 675;
 
+        let mut last_height = self.height();
+        // wait till we know a height to start our move
+        while last_height < 0 {
+            last_height = self.height();
+            time::delay_for(Duration::from_millis(100)).await;
+        }
+
+        let mut last_checked = Instant::now();
+        let mut last_height = self.height();
         loop {
-            let last_height = self.height();
-            let distance = (height - last_height).abs();
-            let delay = move_delay(distance);
-            debug!(
-                "last-height: {} height: {} distance: {} delay: {:?}",
-                last_height,
-                height,
-                height - last_height,
-                delay
+            let height = self.height();
+            let distance_to_go = (goal_height - height).abs();
+            let distance_moved = (height - last_height).abs();
+            let now = Instant::now();
+            let velocity =
+                distance_moved as f64 / now.duration_since(last_checked).as_millis() as f64;
+
+            last_checked = now;
+            last_height = height;
+
+            let will_travel = velocity * DELAY as f64;
+            let will_overshoot = distance_to_go as f64 - will_travel < 0.0;
+
+            trace!(
+                "goal: {}\nheight: {}\nto_go: {}\nmoved: {}\nvelocity: {}\nwill_travel: {}\nwill_overshoot: {}",
+                goal_height, last_height, distance_to_go, distance_moved, velocity, will_travel, will_overshoot
             );
 
-            match height.cmp(&last_height) {
-                cmp::Ordering::Equal => break,
-                cmp::Ordering::Greater => self.move_up().await?,
-                cmp::Ordering::Less => self.move_down().await?,
+            if !will_overshoot {
+                match goal_height.cmp(&height) {
+                    cmp::Ordering::Equal => break,
+                    cmp::Ordering::Greater => self.move_up().await?,
+                    cmp::Ordering::Less => self.move_down().await?,
+                }
+            } else {
+                break;
             }
 
-            time::delay_for(delay).await;
+            time::delay_for(Duration::from_millis(DELAY)).await;
         }
 
         Ok(())
@@ -190,6 +209,50 @@ impl Desk {
         .await
     }
 
+    pub async fn save_sit(&mut self) -> Result<(), UpliftError> {
+        debug!("Save sit");
+
+        Self::write(
+            &mut self.peripheral,
+            &self.data_in_characteristic,
+            &SAVE_SIT_PACKET,
+        )
+        .await
+    }
+
+    pub async fn save_stand(&mut self) -> Result<(), UpliftError> {
+        debug!("Save stand");
+
+        Self::write(
+            &mut self.peripheral,
+            &self.data_in_characteristic,
+            &SAVE_STAND_PACKET,
+        )
+        .await
+    }
+
+    pub async fn sit(&mut self) -> Result<(), UpliftError> {
+        debug!("Sit");
+
+        Self::write(
+            &mut self.peripheral,
+            &self.data_in_characteristic,
+            &SIT_PACKET,
+        )
+        .await
+    }
+
+    pub async fn stand(&mut self) -> Result<(), UpliftError> {
+        debug!("Stand");
+
+        Self::write(
+            &mut self.peripheral,
+            &self.data_in_characteristic,
+            &STAND_PACKET,
+        )
+        .await
+    }
+
     pub async fn query(&mut self) -> Result<(), UpliftError> {
         Self::write(
             &mut self.peripheral,
@@ -215,15 +278,6 @@ impl Desk {
 
         Ok(())
     }
-}
-
-/// Calculate how much extra delay we should add to our delay function when moving our desk, based on how close we are
-fn move_delay(distance: isize) -> Duration {
-    const SCALING_FACTOR: isize = 250;
-    const BASE_DELAY: isize = 500;
-    let millis = SCALING_FACTOR - distance;
-
-    Duration::from_millis((millis.max(0) + BASE_DELAY) as u64)
 }
 
 fn get_raw_height(data: &[u8]) -> (u8, u8) {
