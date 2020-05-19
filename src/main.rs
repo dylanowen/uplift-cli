@@ -48,8 +48,8 @@ async fn main() -> Result<(), UpliftError> {
         )
         .subcommand(SubCommand::with_name("listen"))
         .subcommand(SubCommand::with_name("set").arg(Arg::with_name("height").required(true)))
-        .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("store")))
-        .subcommand(SubCommand::with_name("stand").arg(Arg::with_name("store")))
+        .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("save")))
+        .subcommand(SubCommand::with_name("stand").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("query"))
         .get_matches();
 
@@ -86,19 +86,23 @@ async fn main() -> Result<(), UpliftError> {
             }
         }
         ("sit", Some(sub_matches)) => {
-            if sub_matches.value_of("store").is_some() {
+            if sub_matches.value_of("save").is_some() {
                 desk.save_sit().await?;
             } else {
                 desk.sit().await?;
             }
+
+            // let the packet actually send
             time::delay_for(Duration::from_millis(100)).await;
         }
         ("stand", Some(sub_matches)) => {
-            if sub_matches.value_of("store").is_some() {
+            if sub_matches.value_of("save").is_some() {
                 desk.save_stand().await?;
             } else {
                 desk.stand().await?;
             }
+
+            // let the packet actually send
             time::delay_for(Duration::from_millis(100)).await;
         }
         ("query", _) => {
