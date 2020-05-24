@@ -11,6 +11,7 @@ use corebluetooth_sys::id;
 pub trait ChanneledDelegate<Event> {
     const DELEGATE_SENDER_IVAR: &'static str = "_sender";
     const DELEGATE_RECEIVER_IVAR: &'static str = "_receiver";
+    const DROPPED_IVAR: &'static str = "_dropped";
 
     fn init() -> id {
         unsafe {
@@ -30,18 +31,30 @@ pub trait ChanneledDelegate<Event> {
         *boxed
     }
 
-    unsafe fn drop_sender(delegate: id) {
-        let _ = Box::from_raw(
-            *(&*delegate).get_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR) as *mut Sender<Event>,
-        );
+    unsafe fn send_event(delegate: id, event: Event) {
+        if !Self::dropped(delegate) {
+            let sender = *(&*delegate).get_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR)
+                as *mut Sender<Event>;
+
+            if let Err(e) = futures::executor::block_on((*sender).send(event)) {
+                error!("Couldn't send delegate event: {}", e)
+            }
+        }
     }
 
-    unsafe fn send_event(delegate: id, event: Event) {
-        let sender =
-            *(&*delegate).get_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR) as *mut Sender<Event>;
+    /// Check to see if we've already dropped this delegate
+    unsafe fn dropped(delegate: id) -> bool {
+        *(&*delegate).get_ivar::<bool>(Self::DROPPED_IVAR)
+    }
 
-        if let Err(e) = futures::executor::block_on((*sender).send(event)) {
-            error!("Couldn't send delegate event: {}", e)
+    unsafe fn drop_channels(delegate: id) {
+        if !Self::dropped(delegate) {
+            let _ = Box::from_raw(
+                *(&*delegate).get_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR)
+                    as *mut Sender<Event>,
+            );
+
+            (&mut *delegate).set_ivar::<bool>(Self::DROPPED_IVAR, true);
         }
     }
 
@@ -61,6 +74,7 @@ pub trait ChanneledDelegate<Event> {
                 Self::DELEGATE_RECEIVER_IVAR,
                 Box::into_raw(recvbox) as *mut c_void,
             );
+            delegate.set_ivar::<bool>(Self::DROPPED_IVAR, false);
         }
         delegate
     }

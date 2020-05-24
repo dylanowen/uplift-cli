@@ -334,3 +334,17 @@ fn get_characteristics(
         name_characteristic.ok_or_else(|| UpliftError::new("Couldn't find name characteristic"))?,
     ))
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// create and redrop our desk continuously, looking for invalid usages of objc
+    #[tokio::test]
+    async fn dropping() {
+        for _ in 0..10 {
+            let desk = Desk::new().await.unwrap();
+            drop(desk);
+        }
+    }
+}

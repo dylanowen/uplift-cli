@@ -145,7 +145,7 @@ impl Peripheral<Delegated> {
 
             for i in 0..found_services_count {
                 let service_ptr = <id as NSArray<id>>::objectAtIndex_(service_ptrs, i) as id;
-                let service = Service::new(StrongPtr::new(service_ptr));
+                let service = Service::new(StrongPtr::retain(service_ptr));
                 let characteristic_uuids =
                     uuids_for_objc(uuids.remove(&service.uuid()).unwrap_or_else(|| vec![]));
 
@@ -387,7 +387,7 @@ impl Delegate {
         unsafe {
             let raw_delegate = Delegate::init();
             let receiver = Delegate::take_receiver(raw_delegate);
-            let delegate = StrongPtr::new(raw_delegate);
+            let delegate = StrongPtr::retain(raw_delegate);
 
             (Delegate(delegate), receiver)
         }
@@ -492,14 +492,16 @@ unsafe fn trace_callback(message: &str, error: id) {
 impl ChanneledDelegate<PeripheralEvent> for Delegate {
     fn delegate_class() -> &'static Class {
         static REGISTER_DELEGATE_CLASS: Once = Once::new();
-        let mut decl =
-            ClassDecl::new(DELEGATE_CLASS_NAME, Class::get("NSObject").unwrap()).unwrap();
 
         REGISTER_DELEGATE_CLASS.call_once(|| {
+            let mut decl =
+                ClassDecl::new(DELEGATE_CLASS_NAME, Class::get("NSObject").unwrap()).unwrap();
+
             decl.add_protocol(Protocol::get("CBPeripheralDelegate").unwrap());
 
             decl.add_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR);
             decl.add_ivar::<*mut c_void>(Self::DELEGATE_RECEIVER_IVAR);
+            decl.add_ivar::<bool>(Self::DROPPED_IVAR);
             unsafe {
                 // Initialization
                 decl.add_method(
@@ -544,6 +546,12 @@ impl ChanneledDelegate<PeripheralEvent> for Delegate {
         });
 
         Class::get(DELEGATE_CLASS_NAME).unwrap()
+    }
+}
+
+impl Drop for Delegate {
+    fn drop(&mut self) {
+        unsafe { Self::drop_channels(*self.0) }
     }
 }
 

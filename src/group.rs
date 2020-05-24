@@ -157,10 +157,8 @@ mod test {
     use super::*;
     use core::mem;
     use futures::channel::mpsc::channel;
-    use futures::channel::mpsc::Receiver;
-    use futures::channel::mpsc::Sender;
     use futures::sink::SinkExt;
-    use futures::{FutureExt, Stream, StreamExt};
+    use futures::StreamExt;
     use tokio::task;
 
     #[tokio::test]

@@ -27,7 +27,7 @@ impl Service {
             for i in 0..found_characteristics_count {
                 let characteristic_ptr =
                     <id as NSArray<id>>::objectAtIndex_(characteristic_ptrs, i) as id;
-                let characteristic = Characteristic::new(StrongPtr::new(characteristic_ptr));
+                let characteristic = Characteristic::new(StrongPtr::retain(characteristic_ptr));
 
                 characteristics.push(characteristic)
             }

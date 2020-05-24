@@ -18,6 +18,8 @@ use crate::desk::Desk;
 use std::time::Duration;
 use tokio::time::timeout;
 
+// this only works for osx and maybe ios
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 mod bluetooth;
 mod desk;
 mod group;
@@ -50,11 +52,39 @@ async fn main() -> Result<(), UpliftError> {
         .subcommand(SubCommand::with_name("set").arg(Arg::with_name("height").required(true)))
         .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("stand").arg(Arg::with_name("save")))
+        .subcommand(SubCommand::with_name("toggle"))
         .subcommand(SubCommand::with_name("query"))
         .get_matches();
 
     setup_logging(&matches)?;
 
+    if timeout(Duration::from_secs(60), run_command(&matches))
+        .await
+        .is_err()
+    {
+        warn!("Ran out of time to execute the command")
+    }
+
+    Ok(())
+}
+
+fn setup_logging(matches: &ArgMatches) -> Result<(), UpliftError> {
+    let log_level = matches.value_of("log-level").unwrap();
+    let log_style = matches.value_of("log-style");
+
+    let mut builder = env_logger::Builder::new();
+    builder.parse_filters(log_level);
+
+    if let Some(s) = log_style {
+        builder.parse_write_style(&s);
+    }
+
+    builder
+        .try_init()
+        .map_err(|e| format!("Failed to setup logger: {}", e).into())
+}
+
+async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
     let mut desk = Desk::new().await?;
 
     match matches.subcommand() {
@@ -78,12 +108,7 @@ async fn main() -> Result<(), UpliftError> {
                 .parse::<isize>()
                 .map_err::<UpliftError, _>(|e| format!("Couldn't parse height: {}", e).into())?;
 
-            if timeout(Duration::from_secs(45), desk.set_height(height))
-                .await
-                .is_err()
-            {
-                warn!("Ran out of time to move the desk")
-            }
+            desk.set_height(height).await?;
         }
         ("sit", Some(sub_matches)) => {
             if sub_matches.value_of("save").is_some() {
@@ -105,37 +130,34 @@ async fn main() -> Result<(), UpliftError> {
             // let the packet actually send
             time::delay_for(Duration::from_millis(100)).await;
         }
-        ("query", _) => {
-            // wait for our height to load
-            while desk.height() <= 0 {
-                desk.query().await?;
-                time::delay_for(Duration::from_millis(100)).await;
+        ("toggle", _) => {
+            let height = query_height(&mut desk).await?;
+            if height > 255 {
+                desk.sit().await?;
+            } else {
+                desk.stand().await?;
             }
-            println!("{}", desk.height());
+
+            // let the packet actually send
+            time::delay_for(Duration::from_millis(100)).await;
+        }
+        ("query", _) => {
+            println!("{}", query_height(&mut desk).await?);
         }
         _ => unreachable!(),
     }
 
-    // todo why does drop cause so many objc seg faults?
-    drop(desk);
-
     Ok(())
 }
 
-fn setup_logging(matches: &ArgMatches) -> Result<(), UpliftError> {
-    let log_level = matches.value_of("log-level").unwrap();
-    let log_style = matches.value_of("log-style");
-
-    let mut builder = env_logger::Builder::new();
-    builder.parse_filters(log_level);
-
-    if let Some(s) = log_style {
-        builder.parse_write_style(&s);
+async fn query_height(desk: &mut Desk) -> Result<isize, UpliftError> {
+    // wait for our height to load
+    while desk.height() <= 0 {
+        desk.query().await?;
+        time::delay_for(Duration::from_millis(100)).await;
     }
 
-    builder
-        .try_init()
-        .map_err(|e| format!("Failed to setup logger: {}", e).into())
+    Ok(desk.height())
 }
 
 #[derive(Debug)]

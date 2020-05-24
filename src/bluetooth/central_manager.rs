@@ -38,7 +38,7 @@ impl CentralManager {
             let label = CString::new("CBQueue").unwrap();
             let queue = dispatch_queue_create(label.as_ptr(), DISPATCH_QUEUE_SERIAL);
 
-            manager = manager.initWithDelegate_queue_(*delegate.delegate as *mut u64, queue as id);
+            manager = manager.initWithDelegate_queue_(*delegate.0 as *mut u64, queue as id);
 
             let manager = StrongPtr::retain(manager);
 
@@ -100,7 +100,7 @@ impl CentralManager {
     pub fn disconnect<S>(&self, peripheral: &Peripheral<S>) {
         unsafe {
             self.manager
-                .connectPeripheral_options_(*peripheral.peripheral, ptr::null_mut())
+                .cancelPeripheralConnection_(*peripheral.peripheral)
         }
     }
 }
@@ -145,18 +145,16 @@ impl Display for State {
 
 const DELEGATE_CLASS_NAME: &str = "MyCentralManagerDelegate";
 
-struct Delegate {
-    delegate: StrongPtr,
-}
+struct Delegate(StrongPtr);
 
 impl Delegate {
     fn new() -> (Self, Receiver<CentralManagerEvent>) {
         unsafe {
             let raw_delegate = Delegate::init();
             let receiver = Delegate::take_receiver(raw_delegate);
-            let delegate = StrongPtr::new(raw_delegate);
+            let delegate = StrongPtr::retain(raw_delegate);
 
-            (Delegate { delegate }, receiver)
+            (Delegate(delegate), receiver)
         }
     }
 
@@ -221,9 +219,9 @@ impl Delegate {
         }
     }
 
-    extern "C" fn will_restore_state(_delegate: &mut Object, _cmd: Sel, _central: id, _dict: id) {
-        trace!("centralmanager_willrestorestate");
-    }
+    // extern "C" fn will_restore_state(_delegate: &mut Object, _cmd: Sel, _central: id, _dict: id) {
+    //     trace!("centralmanager_willrestorestate");
+    // }
 
     extern "C" fn peripheral_discovered(
         delegate: &mut Object,
@@ -254,7 +252,7 @@ impl Delegate {
 impl Drop for Delegate {
     fn drop(&mut self) {
         unsafe {
-            Delegate::drop_sender(*self.delegate);
+            Delegate::drop_channels(*self.0);
         }
     }
 }
@@ -262,14 +260,16 @@ impl Drop for Delegate {
 impl ChanneledDelegate<CentralManagerEvent> for Delegate {
     fn delegate_class() -> &'static Class {
         static REGISTER_DELEGATE_CLASS: Once = Once::new();
-        let mut decl =
-            ClassDecl::new(DELEGATE_CLASS_NAME, Class::get("NSObject").unwrap()).unwrap();
 
         REGISTER_DELEGATE_CLASS.call_once(|| {
+            let mut decl =
+                ClassDecl::new(DELEGATE_CLASS_NAME, Class::get("NSObject").unwrap()).unwrap();
+
             decl.add_protocol(Protocol::get("CBCentralManagerDelegate").unwrap());
 
             decl.add_ivar::<*mut c_void>(Self::DELEGATE_SENDER_IVAR);
             decl.add_ivar::<*mut c_void>(Self::DELEGATE_RECEIVER_IVAR);
+            decl.add_ivar::<bool>(Self::DROPPED_IVAR);
             unsafe {
                 // Initialization
                 decl.add_method(
@@ -303,10 +303,11 @@ impl ChanneledDelegate<CentralManagerEvent> for Delegate {
                     sel!(centralManagerDidUpdateState:),
                     Self::state_updated as extern "C" fn(&mut Object, Sel, id),
                 );
-                decl.add_method(
-                    sel!(centralManager:willRestoreState:),
-                    Self::will_restore_state as extern "C" fn(&mut Object, Sel, id, id),
-                );
+                // TODO we don't really need state restoration, so ignore this for now
+                // decl.add_method(
+                //     sel!(centralManager:willRestoreState:),
+                //     Self::will_restore_state as extern "C" fn(&mut Object, Sel, id, id),
+                // );
             }
 
             decl.register();
