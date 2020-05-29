@@ -15,6 +15,7 @@ use tokio::time;
 use crate::bluetooth::BluetoothError;
 use crate::bluetooth::UUID;
 use crate::desk::Desk;
+use std::convert::identity;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -48,6 +49,12 @@ async fn main() -> Result<(), UpliftError> {
                 .help("Set the environment log style")
                 .env(env_logger::DEFAULT_WRITE_STYLE_ENV),
         )
+        .arg(
+            Arg::with_name("timeout")
+                .long("timeout")
+                .help("Set the timeout in seconds. 0 for infinite")
+                .default_value("60"),
+        )
         .subcommand(SubCommand::with_name("listen"))
         .subcommand(SubCommand::with_name("set").arg(Arg::with_name("height").required(true)))
         .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("save")))
@@ -58,14 +65,21 @@ async fn main() -> Result<(), UpliftError> {
 
     setup_logging(&matches)?;
 
-    if timeout(Duration::from_secs(60), run_command(&matches))
-        .await
-        .is_err()
-    {
-        warn!("Ran out of time to execute the command")
-    }
+    let timeout_seconds = matches
+        .value_of("timeout")
+        .unwrap()
+        .parse::<u64>()
+        .map_err::<UpliftError, _>(|e| format!("Couldn't parse timeout: {}", e).into())?;
 
-    Ok(())
+    let runner = run_command(&matches);
+    if timeout_seconds > 0 {
+        timeout(Duration::from_secs(timeout_seconds), runner)
+            .await
+            .map_err(|_| "timed out".into())
+            .and_then(identity)
+    } else {
+        runner.await
+    }
 }
 
 fn setup_logging(matches: &ArgMatches) -> Result<(), UpliftError> {
