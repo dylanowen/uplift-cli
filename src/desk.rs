@@ -30,6 +30,7 @@ lazy_static! {
 }
 
 pub struct Desk {
+    rssi: i64,
     data_in_characteristic: Characteristic,
     data_out_characteristic: Characteristic,
     _name_characteristic: Characteristic,
@@ -45,13 +46,16 @@ impl Desk {
         manager.start_scan(vec![DESK_SERVICE_UUID.clone()]);
 
         let mut peripheral;
+        let rssi;
         loop {
             match manager_receiver.next().await {
-                Some(CentralManagerEvent::PeripheralDiscovered(p, adv, rssi))
+                Some(CentralManagerEvent::PeripheralDiscovered(p, adv, found_rssi))
                     if adv.contains(&Advertisement::Connectable(true)) =>
                 {
-                    debug!("Discovered peripheral {}, {}rssi", p, rssi);
+                    debug!("Discovered peripheral {}, {}rssi", p, found_rssi);
                     peripheral = p;
+                    rssi = found_rssi;
+
                     break;
                 }
                 _ => (), // noop
@@ -108,6 +112,7 @@ impl Desk {
         });
 
         let mut desk = Desk {
+            rssi,
             data_in_characteristic,
             data_out_characteristic,
             _name_characteristic: name_characteristic,
@@ -123,6 +128,10 @@ impl Desk {
         desk.query().await?;
 
         Ok(desk)
+    }
+
+    pub fn rssi(&self) -> i64 {
+        self.rssi
     }
 
     pub fn height(&self) -> isize {

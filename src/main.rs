@@ -60,7 +60,7 @@ async fn main() -> Result<(), UpliftError> {
         .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("stand").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("toggle"))
-        .subcommand(SubCommand::with_name("query"))
+        .subcommand(SubCommand::with_name("query").arg(Arg::with_name("signal")))
         .get_matches();
 
     setup_logging(&matches)?;
@@ -155,8 +155,12 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
             // let the packet actually send
             time::delay_for(Duration::from_millis(100)).await;
         }
-        ("query", _) => {
-            println!("{}", query_height(&mut desk).await?);
+        ("query", Some(sub_matches)) => {
+            if sub_matches.value_of("signal").is_some() {
+                println!("{}", desk.rssi());
+            } else {
+                println!("{}", query_height(&mut desk).await?);
+            }
         }
         _ => unreachable!(),
     }
