@@ -132,7 +132,7 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
             }
 
             // let the packet actually send
-            time::delay_for(Duration::from_millis(100)).await;
+            query_height(&mut desk).await?;
         }
         ("stand", Some(sub_matches)) => {
             if sub_matches.value_of("save").is_some() {
@@ -142,7 +142,7 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
             }
 
             // let the packet actually send
-            time::delay_for(Duration::from_millis(100)).await;
+            query_height(&mut desk).await?;
         }
         ("toggle", _) => {
             let height = query_height(&mut desk).await?;
@@ -153,7 +153,7 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
             }
 
             // let the packet actually send
-            time::delay_for(Duration::from_millis(100)).await;
+            query_height(&mut desk).await?;
         }
         ("query", Some(sub_matches)) => {
             if sub_matches.value_of("signal").is_some() {
