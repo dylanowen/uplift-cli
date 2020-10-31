@@ -170,8 +170,8 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), UpliftError> {
 
 async fn query_height(desk: &mut Desk) -> Result<isize, UpliftError> {
     // wait for our height to load
+    desk.query().await?;
     while desk.height() <= 0 {
-        desk.query().await?;
         time::delay_for(Duration::from_millis(100)).await;
     }
 

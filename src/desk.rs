@@ -263,6 +263,8 @@ impl Desk {
     }
 
     pub async fn query(&mut self) -> Result<(), UpliftError> {
+        // since we're querying, clear our height so we can check if it's updated
+        self.height.store(0, Ordering::Relaxed);
         Self::write(
             &mut self.peripheral,
             &self.data_in_characteristic,
