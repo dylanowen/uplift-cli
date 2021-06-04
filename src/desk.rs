@@ -9,8 +9,10 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use tokio::time;
 
-use crate::bluetooth::{Advertisement, CentralManager, CentralManagerEvent, Delegated, Peripheral};
-use crate::bluetooth::{Characteristic, UUID};
+use crate::bluetooth::{
+    Advertisement, CentralManager, CentralManagerEvent, Delegated, Peripheral, State,
+};
+use crate::bluetooth::{Characteristic, Uuid};
 use crate::UpliftError;
 
 const UP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x01, 0x00, 0x01, 0x7e];
@@ -23,10 +25,10 @@ const STAND_PACKET: [u8; 6] = [0xf1, 0xf1, 0x06, 0x00, 0x06, 0x7e];
 const QUERY_PACKET: [u8; 6] = [0xf1, 0xf1, 0x07, 0x00, 0x07, 0x7e];
 
 lazy_static! {
-    pub static ref DESK_SERVICE_UUID: UUID = UUID::parse("ff12").unwrap();
-    pub static ref DESK_DATA_IN: UUID = UUID::parse("ff01").unwrap();
-    pub static ref DESK_DATA_OUT: UUID = UUID::parse("ff02").unwrap();
-    pub static ref DESK_NAME: UUID = UUID::parse("ff06").unwrap();
+    pub static ref DESK_SERVICE_UUID: Uuid = Uuid::parse("ff12").unwrap();
+    pub static ref DESK_DATA_IN: Uuid = Uuid::parse("ff01").unwrap();
+    pub static ref DESK_DATA_OUT: Uuid = Uuid::parse("ff02").unwrap();
+    pub static ref DESK_NAME: Uuid = Uuid::parse("ff06").unwrap();
 }
 
 pub struct Desk {
@@ -43,6 +45,18 @@ pub struct Desk {
 impl Desk {
     pub async fn new() -> Result<Desk, UpliftError> {
         let (manager, mut manager_receiver) = CentralManager::new();
+
+        // make sure we're powered on before starting our scan
+        loop {
+            match manager_receiver.next().await {
+                Some(CentralManagerEvent::StateUpdated(State::PoweredOn)) => {
+                    debug!("Peripheral Powered On");
+                    break;
+                }
+                event => debug!("{:?}", event), // noop
+            }
+        }
+
         manager.start_scan(vec![DESK_SERVICE_UUID.clone()]);
 
         let mut peripheral;
@@ -58,7 +72,7 @@ impl Desk {
 
                     break;
                 }
-                _ => (), // noop
+                event => debug!("{:?}", event), // noop
             }
         }
 

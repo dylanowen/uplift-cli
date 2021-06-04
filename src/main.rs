@@ -13,7 +13,7 @@ use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use tokio::time;
 
 use crate::bluetooth::BluetoothError;
-use crate::bluetooth::UUID;
+use crate::bluetooth::Uuid;
 use crate::desk::Desk;
 use std::convert::identity;
 use std::time::Duration;
@@ -26,10 +26,10 @@ mod desk;
 mod group;
 
 lazy_static! {
-    pub static ref DESK_SERVICE_UUID: UUID = UUID::parse("ff12").unwrap();
-    pub static ref DESK_DATA_IN: UUID = UUID::parse("ff01").unwrap();
-    pub static ref DESK_DATA_OUT: UUID = UUID::parse("ff02").unwrap();
-    pub static ref DESK_NAME: UUID = UUID::parse("ff06").unwrap();
+    pub static ref DESK_SERVICE_UUID: Uuid = Uuid::parse("ff12").unwrap();
+    pub static ref DESK_DATA_IN: Uuid = Uuid::parse("ff01").unwrap();
+    pub static ref DESK_DATA_OUT: Uuid = Uuid::parse("ff02").unwrap();
+    pub static ref DESK_NAME: Uuid = Uuid::parse("ff06").unwrap();
 }
 
 #[tokio::main]

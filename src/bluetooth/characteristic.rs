@@ -6,7 +6,7 @@ use objc::rc::StrongPtr;
 
 use corebluetooth_sys::{id, CBAttribute};
 
-use crate::bluetooth::UUID;
+use crate::bluetooth::Uuid;
 
 pub struct Characteristic {
     pub(in crate::bluetooth) characteristic: StrongPtr,
@@ -31,7 +31,7 @@ impl Characteristic {
         Characteristic { characteristic }
     }
 
-    pub fn uuid(&self) -> Option<UUID> {
+    pub fn uuid(&self) -> Option<Uuid> {
         unsafe {
             let uuid = <id as CBAttribute>::UUID(*self.characteristic) as id;
             if !uuid.is_null() {

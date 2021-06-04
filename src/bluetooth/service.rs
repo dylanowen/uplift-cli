@@ -1,5 +1,5 @@
 use crate::bluetooth::characteristic::Characteristic;
-use crate::bluetooth::UUID;
+use crate::bluetooth::Uuid;
 use core::fmt;
 use corebluetooth_sys::{id, CBAttribute, CBService, NSArray};
 use objc::rc::StrongPtr;
@@ -14,7 +14,7 @@ impl Service {
         Service { service }
     }
 
-    pub fn uuid(&self) -> UUID {
+    pub fn uuid(&self) -> Uuid {
         unsafe { (<id as CBAttribute>::UUID(*self.service) as id).into() }
     }
 

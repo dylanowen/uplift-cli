@@ -3,7 +3,7 @@ use crate::bluetooth::delegate::ChanneledDelegate;
 use crate::bluetooth::service::Service;
 use crate::bluetooth::utils::{EnhancedIDArray, EnhancedNsString};
 use crate::bluetooth::Advertisement::Connectable;
-use crate::bluetooth::UUID;
+use crate::bluetooth::Uuid;
 use crate::group::GroupBy;
 use core::{fmt, ptr, slice};
 use corebluetooth_sys::{
@@ -61,28 +61,18 @@ impl Peripheral<()> {
             let (delegate, receiver) = Delegate::new();
             self.peripheral.setDelegate_(*delegate.0 as *mut u64);
 
-            let discovered_services = receiver.group_by(
-                |e| match e {
-                    PeripheralEvent::DiscoveredServices => true,
-                    _ => false,
-                },
-                |_| (),
-            );
+            let discovered_services =
+                receiver.group_by(|e| matches!(e, PeripheralEvent::DiscoveredServices), |_| ());
+
             let discovered_characteristics = discovered_services.add_group(
-                |e| match e {
-                    PeripheralEvent::DiscoveredCharacteristics(_) => true,
-                    _ => false,
-                },
+                |e| matches!(e, PeripheralEvent::DiscoveredCharacteristics(_)),
                 |e| match e {
                     PeripheralEvent::DiscoveredCharacteristics(s) => s,
                     _ => unreachable!(),
                 },
             );
             let updated_characteristic_value = discovered_services.add_group(
-                |e| match e {
-                    PeripheralEvent::UpdatedCharacteristicValue(_) => true,
-                    _ => false,
-                },
+                |e| matches!(e, PeripheralEvent::UpdatedCharacteristicValue(_)),
                 |e| match e {
                     PeripheralEvent::UpdatedCharacteristicValue(c) => {
                         let ns_data = <id as CBCharacteristic>::value(*c.characteristic) as id;
@@ -134,7 +124,7 @@ impl<S> Peripheral<S> {
 }
 
 impl Peripheral<Delegated> {
-    pub async fn discover_services(&mut self, mut uuids: HashMap<UUID, Vec<UUID>>) -> Vec<Service> {
+    pub async fn discover_services(&mut self, mut uuids: HashMap<Uuid, Vec<Uuid>>) -> Vec<Service> {
         unsafe {
             let ns_uuids = uuids_for_objc(uuids.keys().cloned().collect());
             self.peripheral.discoverServices_(ns_uuids);
@@ -147,7 +137,7 @@ impl Peripheral<Delegated> {
                 let service_ptr = <id as NSArray<id>>::objectAtIndex_(service_ptrs, i) as id;
                 let service = Service::new(StrongPtr::retain(service_ptr));
                 let characteristic_uuids =
-                    uuids_for_objc(uuids.remove(&service.uuid()).unwrap_or_else(|| vec![]));
+                    uuids_for_objc(uuids.remove(&service.uuid()).unwrap_or_else(Vec::new));
 
                 self.peripheral
                     .discoverCharacteristics_forService_(characteristic_uuids, service_ptr);
@@ -350,7 +340,7 @@ impl Peripheral<Delegated> {
     // }
 }
 
-fn uuids_for_objc(uuids: Vec<UUID>) -> id {
+fn uuids_for_objc(uuids: Vec<Uuid>) -> id {
     if !uuids.is_empty() {
         uuids.into_ns_array()
     } else {

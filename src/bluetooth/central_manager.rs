@@ -17,11 +17,11 @@ use corebluetooth_sys::{
 
 use crate::bluetooth::delegate::ChanneledDelegate;
 use crate::bluetooth::utils::EnhancedIDArray;
-use crate::bluetooth::uuid::UUID;
+use crate::bluetooth::uuid::Uuid;
 use crate::bluetooth::{Advertisement, Peripheral};
 use core::fmt;
 use objc::declare::ClassDecl;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Once;
 
 pub struct CentralManager {
@@ -52,21 +52,15 @@ impl CentralManager {
         }
     }
 
-    pub fn start_scan(&self, service_uuids: Vec<UUID>) {
+    pub fn start_scan(&self, service_uuids: Vec<Uuid>) {
         unsafe {
             let yes = <id as NSNumber_NSNumberCreation>::numberWithBool_(YES);
 
-            let services = service_uuids.into_ns_array();
-            // let services: id =
-            //     <id as NSMutableArray_NSMutableArrayCreation<id>>::arrayWithCapacity_(
-            //         service_uuids.len() as u64,
-            //     );
-            //
-            // for uuid in service_uuids.into_iter() {
-            //     let cbuuid = uuid.cbuuid();
-            //
-            //     NSMutableArray::<id>::addObject_(services, cbuuid as u64);
+            // for uuid in service_uuids.iter() {
+            //     log::info!("{}", uuid.to_short_string())
             // }
+
+            let services = service_uuids.into_ns_array();
 
             let options = <id as NSMutableDictionary_NSMutableDictionaryCreation<id, id>>::dictionaryWithCapacity_(1);
             NSMutableDictionary::<id, id>::setObject_forKey_(
@@ -111,6 +105,20 @@ pub enum CentralManagerEvent {
     PeripheralDisconnected(Peripheral<()>),
     PeripheralFailedToConnect(Peripheral<()>),
     StateUpdated(State),
+}
+
+impl Debug for CentralManagerEvent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CentralManagerEvent::PeripheralDiscovered(_, _, _) => write!(f, "PeripheralDiscovered"),
+            CentralManagerEvent::PeripheralConnected(_) => write!(f, "PeripheralConnected"),
+            CentralManagerEvent::PeripheralDisconnected(_) => write!(f, "PeripheralDisconnected"),
+            CentralManagerEvent::PeripheralFailedToConnect(_) => {
+                write!(f, "PeripheralFailedToConnect")
+            }
+            CentralManagerEvent::StateUpdated(state) => write!(f, "StateUpdated({:?})", state),
+        }
+    }
 }
 
 #[derive(Debug)]

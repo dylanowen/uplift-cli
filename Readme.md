@@ -29,7 +29,7 @@ uplift listen
 ```
 
 ### Set An Arbitrary Height
-This doesn't work that well as it has a hard time actually alignign the height correctly
+This doesn't work that well as it has a hard time actually aligning the height correctly
 ```bash
 uplift set 384
 ```

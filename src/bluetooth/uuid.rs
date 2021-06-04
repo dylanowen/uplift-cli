@@ -1,7 +1,5 @@
 use std::ffi::CString;
 
-use uuid::Uuid;
-
 use corebluetooth_sys::id;
 use corebluetooth_sys::NSString_NSStringExtensionMethods;
 use corebluetooth_sys::CBUUID;
@@ -18,14 +16,14 @@ use std::fmt::{Debug, Display, Formatter};
 ///
 /// This class attempts to handle those lies in it's documentation
 #[derive(Clone, Eq, PartialEq, Hash)]
-pub struct UUID(Uuid);
+pub struct Uuid(uuid::Uuid);
 
 const BLUETOOTH_BASE_UUID: &str = "-0000-1000-8000-00805f9b34fb";
 
-impl UUID {
-    pub fn parse<S: Into<String>>(s: S) -> Result<UUID, BluetoothError> {
+impl Uuid {
+    pub fn parse<S: Into<String>>(s: S) -> Result<Uuid, BluetoothError> {
         let mut s = s.into();
-        // the uuid crate expects all 128 bits, so make sure to prefix our uuid with the bluetooth base
+        // the uuid crate expects all 128 bits, so make sure to postfix our uuid with the bluetooth base
         if s.len() == 4 {
             s = format!("0000{}", s);
         }
@@ -33,10 +31,10 @@ impl UUID {
             s = format!("{}{}", s, BLUETOOTH_BASE_UUID);
         }
 
-        let inner_uuid = Uuid::parse_str(&s)
+        let inner_uuid = uuid::Uuid::parse_str(&s)
             .map_err(|e| BluetoothError(format!("Couldn't parse uuid({}): {}", s, e)))?;
 
-        Ok(UUID(inner_uuid))
+        Ok(Uuid(inner_uuid))
     }
 
     pub fn cbuuid(&self) -> id {
@@ -68,37 +66,37 @@ impl UUID {
     }
 }
 
-impl Display for UUID {
+impl Display for Uuid {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_short_string())
     }
 }
 
-impl Debug for UUID {
+impl Debug for Uuid {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl Into<id> for UUID {
-    fn into(self) -> id {
-        self.cbuuid()
+impl From<Uuid> for id {
+    fn from(uuid: Uuid) -> Self {
+        uuid.cbuuid()
     }
 }
 
-impl From<id> for UUID {
+impl From<id> for Uuid {
     fn from(cbuuid: id) -> Self {
         unsafe {
             let ns_string = cbuuid.UUIDString() as id;
             let s = ns_string.to_rust();
 
-            UUID::parse(s).expect("CBUUID should be well formed")
+            Uuid::parse(s).expect("CBUUID should be well formed")
         }
     }
 }
 
-impl From<Uuid> for UUID {
-    fn from(uuid: Uuid) -> Self {
-        UUID(uuid)
+impl From<uuid::Uuid> for Uuid {
+    fn from(uuid: uuid::Uuid) -> Self {
+        Uuid(uuid)
     }
 }

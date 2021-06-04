@@ -8,7 +8,7 @@ use objc::runtime::{Class, Object, Sel};
 
 use corebluetooth_sys::id;
 
-pub trait ChanneledDelegate<Event>: Drop {
+pub trait ChanneledDelegate<Event> {
     const DELEGATE_SENDER_IVAR: &'static str = "_sender";
     const DELEGATE_RECEIVER_IVAR: &'static str = "_receiver";
     const DROPPED_IVAR: &'static str = "_dropped";
