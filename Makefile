@@ -2,16 +2,23 @@ SHELL:=/bin/bash
 
 .DEFAULT_GOAL := default
 
+fix:
+	cargo fix --allow-staged
+
 format:
 	cargo fmt
 
-clippy:
+lint:
 	cargo clippy
+	-cargo audit
 
-build: format clippy
+build: format lint
 	cargo build
 
-install: build
+test: format
+	cargo test
+
+install: format lint
 	cargo install --force --path .
 
 default: build

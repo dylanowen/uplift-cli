@@ -1,22 +1,25 @@
-use core::cmp;
-use std::collections::HashMap;
+use btleplug::api::{
+    bleuuid, Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification,
+    WriteType,
+};
+use btleplug::platform::{Manager, Peripheral};
+
+use std::collections::BTreeSet;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// use btleplug::api::{Central, Manager, Peripheral};
 
-use futures::StreamExt;
+use anyhow::{anyhow, Context};
+use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
+use futures::{executor, StreamExt};
 use tokio::time;
+use uuid::Uuid;
 
-use crate::bluetooth::{
-    Advertisement, CentralManager, CentralManagerEvent, Delegated, Peripheral, State,
-};
-use crate::bluetooth::{Characteristic, Uuid};
-use crate::UpliftError;
-
-const UP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x01, 0x00, 0x01, 0x7e];
-const DOWN_PACKET: [u8; 6] = [0xf1, 0xf1, 0x02, 0x00, 0x02, 0x7e];
+// const UP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x01, 0x00, 0x01, 0x7e];
+// const DOWN_PACKET: [u8; 6] = [0xf1, 0xf1, 0x02, 0x00, 0x02, 0x7e];
 const SAVE_SIT_PACKET: [u8; 6] = [0xf1, 0xf1, 0x03, 0x00, 0x03, 0x7e];
 const SAVE_STAND_PACKET: [u8; 6] = [0xf1, 0xf1, 0x04, 0x00, 0x04, 0x7e];
 const SIT_PACKET: [u8; 6] = [0xf1, 0xf1, 0x05, 0x00, 0x05, 0x7e];
@@ -24,130 +27,87 @@ const STAND_PACKET: [u8; 6] = [0xf1, 0xf1, 0x06, 0x00, 0x06, 0x7e];
 // const STOP_PACKET: [u8; 6] = [0xf1, 0xf1, 0x02, 0x00, 0x2b, 0x7e];
 const QUERY_PACKET: [u8; 6] = [0xf1, 0xf1, 0x07, 0x00, 0x07, 0x7e];
 
-lazy_static! {
-    pub static ref DESK_SERVICE_UUID: Uuid = Uuid::parse("ff12").unwrap();
-    pub static ref DESK_DATA_IN: Uuid = Uuid::parse("ff01").unwrap();
-    pub static ref DESK_DATA_OUT: Uuid = Uuid::parse("ff02").unwrap();
-    pub static ref DESK_NAME: Uuid = Uuid::parse("ff06").unwrap();
-}
+pub const DESK_SERVICE_UUID: Uuid = bleuuid::uuid_from_u16(0xff12);
+
+const DESK_DATA_IN_UUID: Uuid = bleuuid::uuid_from_u16(0xff01);
+const DESK_DATA_OUT_UUID: Uuid = bleuuid::uuid_from_u16(0xff02);
+const DESK_NAME_UUID: Uuid = bleuuid::uuid_from_u16(0xff06);
+
+const MAX_MANAGER_RETRIES: usize = 5;
+const MAX_CONNECTION_ATTEMPTS: usize = 5;
 
 pub struct Desk {
-    rssi: i64,
-    data_in_characteristic: Characteristic,
-    data_out_characteristic: Characteristic,
-    _name_characteristic: Characteristic,
-    manager: CentralManager,
-    peripheral: Peripheral<Delegated>,
-    raw_height: Arc<(AtomicU8, AtomicU8)>,
+    // rssi: i64,
     height: Arc<AtomicIsize>,
+    raw_height: Arc<(AtomicU8, AtomicU8)>,
+    data_in_characteristic: Characteristic,
+    peripheral: Peripheral,
+    _manager: Manager,
 }
 
 impl Desk {
-    pub async fn new() -> Result<Desk, UpliftError> {
-        let (manager, mut manager_receiver) = CentralManager::new();
+    pub async fn new() -> Result<Desk, anyhow::Error> {
+        // let manager = Manager::new().await?;
+        let (manager, peripheral) = connect().await?;
 
-        // make sure we're powered on before starting our scan
-        loop {
-            match manager_receiver.next().await {
-                Some(CentralManagerEvent::StateUpdated(State::PoweredOn)) => {
-                    debug!("Peripheral Powered On");
-                    break;
-                }
-                event => debug!("{:?}", event), // noop
-            }
-        }
+        log::debug!("Connected to peripheral: {:?}", peripheral.id());
 
-        manager.start_scan(vec![DESK_SERVICE_UUID.clone()]);
-
-        let mut peripheral;
-        let rssi;
-        loop {
-            match manager_receiver.next().await {
-                Some(CentralManagerEvent::PeripheralDiscovered(p, adv, found_rssi))
-                    if adv.contains(&Advertisement::Connectable(true)) =>
-                {
-                    debug!("Discovered peripheral {}, {}rssi", p, found_rssi);
-                    peripheral = p;
-                    rssi = found_rssi;
-
-                    break;
-                }
-                event => debug!("{:?}", event), // noop
-            }
-        }
-
-        manager.stop_scan();
-        manager.connect(&peripheral);
-
-        loop {
-            if let Some(CentralManagerEvent::PeripheralConnected(p)) = manager_receiver.next().await
-            {
-                debug!("Connected to peripheral {}", p);
-                peripheral = p;
-                break;
-            }
-        }
-
-        let (mut peripheral, mut characteristic_receiver) = peripheral.with_delegate();
-
-        let mut service_uuids = HashMap::new();
-        service_uuids.insert(
-            DESK_SERVICE_UUID.clone(),
-            vec![
-                DESK_DATA_IN.clone(),
-                DESK_DATA_OUT.clone(),
-                DESK_NAME.clone(),
-            ],
-        );
-        let service = peripheral
-            .discover_services(service_uuids)
+        // start discovering characteristics on our peripheral so we can `
+        peripheral
+            .discover_services()
             .await
-            .pop()
-            .expect("We should have found a service");
+            .context("Discovering Services")?;
 
-        let (data_in_characteristic, data_out_characteristic, name_characteristic) =
-            get_characteristics(service.characteristics())?;
+        let (data_in_characteristic, data_out_characteristic, _name_characteristic) =
+            get_characteristics(peripheral.characteristics())?;
 
         let height = Arc::new(AtomicIsize::new(-1));
         let raw_height = Arc::new((AtomicU8::new(0), AtomicU8::new(0)));
-        let updated_height = height.clone();
-        let updated_raw = raw_height.clone();
-        tokio::spawn(async move {
-            while let Some((_, data)) = characteristic_receiver.next().await {
-                let last_height = updated_height.load(Ordering::Relaxed);
-                let (low, high) = get_raw_height(&data);
-                let height = estimate_height((low, high), last_height);
 
-                trace!("Updated Height: ({:x},{:x}) -> {:x}", low, high, height);
-                updated_height.store(height, Ordering::Relaxed);
-                updated_raw.0.store(low, Ordering::Relaxed);
-                updated_raw.1.store(high, Ordering::Relaxed);
-            }
-        });
+        // subscribe to events (height) on our peripheral
+        {
+            let updated_height = height.clone();
+            let updated_raw_height = raw_height.clone();
 
-        let mut desk = Desk {
-            rssi,
-            data_in_characteristic,
-            data_out_characteristic,
-            _name_characteristic: name_characteristic,
-            manager,
-            peripheral,
+            let mut height_receiver = peripheral.notifications().await?;
+            peripheral
+                .subscribe(&data_out_characteristic)
+                .await
+                .context("Subscribing to desk updates")?;
+
+            tokio::spawn(async move {
+                while let Some(ValueNotification { value, .. }) = height_receiver.next().await {
+                    let last_height = updated_height.load(Ordering::Relaxed);
+                    let (low, high) = get_raw_height(&value);
+                    let height = estimate_height((low, high), last_height);
+
+                    log::trace!("Updated Height: ({:x},{:x}) -> {:x}", low, high, height);
+                    updated_height.store(height, Ordering::Relaxed);
+                    updated_raw_height.0.store(low, Ordering::Relaxed);
+                    updated_raw_height.1.store(high, Ordering::Relaxed);
+                }
+            });
+        }
+
+        let desk = Desk {
             height,
             raw_height,
+            data_in_characteristic,
+            peripheral,
+            _manager: manager,
         };
 
-        desk.peripheral.subscribe(&desk.data_out_characteristic);
-
-        // just connected so ask for our height
-        desk.query().await?;
+        // we need to do an initial query to actually write anything, so just get that out of the way
+        desk.write(&desk.data_in_characteristic, &QUERY_PACKET)
+            .await?;
 
         Ok(desk)
     }
 
-    pub fn rssi(&self) -> i64 {
-        self.rssi
-    }
-
+    // pub fn rssi(&self) -> i64 {
+    //     self.rssi
+    // }
+    //
     pub fn height(&self) -> isize {
         self.height.load(Ordering::Relaxed)
     }
@@ -159,132 +119,65 @@ impl Desk {
         )
     }
 
-    /// This function doesn't work that well, we spend too much back and forth trying to get the
-    /// desk just right
-    pub async fn set_height(&mut self, goal_height: isize) -> Result<(), UpliftError> {
-        const DELAY: u64 = 675;
+    // pub async fn move_up(&self) -> Result<(), anyhow::Error> {
+    //     // debug!("Move up @ height {}", self.height());
+    //
+    //     self.write(&self.data_in_characteristic, &UP_PACKET).await?;
+    //
+    //     Ok(())
+    // }
+    //
+    // pub async fn move_down(&self) -> Result<(), anyhow::Error> {
+    //     // debug!("Move down @ height {}", self.height());
+    //
+    //     self.write(&self.data_in_characteristic, &DOWN_PACKET).await
+    // }
 
-        let mut last_height = self.height();
-        // wait till we know a height to start our move
-        while last_height < 0 {
-            last_height = self.height();
-            time::delay_for(Duration::from_millis(100)).await;
-        }
+    pub async fn save_sit(&self) -> Result<(), anyhow::Error> {
+        log::debug!("Save sit");
 
-        let mut last_checked = Instant::now();
-        let mut last_height = self.height();
-        loop {
-            let height = self.height();
-            let distance_to_go = (goal_height - height).abs();
-            let distance_moved = (height - last_height).abs();
-            let now = Instant::now();
-            let velocity =
-                distance_moved as f64 / now.duration_since(last_checked).as_millis() as f64;
-
-            last_checked = now;
-            last_height = height;
-
-            let will_travel = velocity * DELAY as f64;
-            let will_overshoot = distance_to_go as f64 - will_travel < 0.0;
-
-            trace!(
-                "goal: {}\nheight: {}\nto_go: {}\nmoved: {}\nvelocity: {}\nwill_travel: {}\nwill_overshoot: {}",
-                goal_height, last_height, distance_to_go, distance_moved, velocity, will_travel, will_overshoot
-            );
-
-            if !will_overshoot {
-                match goal_height.cmp(&height) {
-                    cmp::Ordering::Equal => break,
-                    cmp::Ordering::Greater => self.move_up().await?,
-                    cmp::Ordering::Less => self.move_down().await?,
-                }
-            } else {
-                break;
-            }
-
-            time::delay_for(Duration::from_millis(DELAY)).await;
-        }
-
-        Ok(())
+        self.write(&self.data_in_characteristic, &SAVE_SIT_PACKET)
+            .await
+            .context("Saving Sit")
     }
 
-    pub async fn move_up(&mut self) -> Result<(), UpliftError> {
-        debug!("Move up @ height {}", self.height());
+    pub async fn save_stand(&self) -> Result<(), anyhow::Error> {
+        log::debug!("Save stand");
 
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &UP_PACKET,
-        )
-        .await?;
-
-        Ok(())
+        self.write(&self.data_in_characteristic, &SAVE_STAND_PACKET)
+            .await
+            .context("Saving Stand")
     }
 
-    pub async fn move_down(&mut self) -> Result<(), UpliftError> {
-        debug!("Move down @ height {}", self.height());
+    pub async fn sit(&self) -> Result<(), anyhow::Error> {
+        log::debug!("Sit");
 
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &DOWN_PACKET,
-        )
-        .await
+        self.write(&self.data_in_characteristic, &SIT_PACKET)
+            .await
+            .context("Sitting")
     }
 
-    pub async fn save_sit(&mut self) -> Result<(), UpliftError> {
-        debug!("Save sit");
+    pub async fn stand(&self) -> Result<(), anyhow::Error> {
+        log::debug!("Stand");
 
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &SAVE_SIT_PACKET,
-        )
-        .await
+        self.write(&self.data_in_characteristic, &STAND_PACKET)
+            .await
+            .context("Standing")
     }
 
-    pub async fn save_stand(&mut self) -> Result<(), UpliftError> {
-        debug!("Save stand");
-
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &SAVE_STAND_PACKET,
-        )
-        .await
-    }
-
-    pub async fn sit(&mut self) -> Result<(), UpliftError> {
-        debug!("Sit");
-
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &SIT_PACKET,
-        )
-        .await
-    }
-
-    pub async fn stand(&mut self) -> Result<(), UpliftError> {
-        debug!("Stand");
-
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &STAND_PACKET,
-        )
-        .await
-    }
-
-    pub async fn query(&mut self) -> Result<(), UpliftError> {
+    pub async fn query_height(&self) -> Result<isize, anyhow::Error> {
         // since we're querying, clear our height so we can check if it's updated
         self.height.store(0, Ordering::Relaxed);
-        Self::write(
-            &mut self.peripheral,
-            &self.data_in_characteristic,
-            &QUERY_PACKET,
-        )
-        .await
+        self.write(&self.data_in_characteristic, &QUERY_PACKET)
+            .await
+            .context("Querying")?;
+
+        // wait for our height to update (is there a better way than polling?)
+        while self.height.load(Ordering::Relaxed) <= 0 {
+            time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Ok(self.height.load(Ordering::Relaxed))
     }
 
     // fn read(&self, characteristic: &Characteristic) -> Result<(), UpliftError> {
@@ -295,13 +188,14 @@ impl Desk {
     // }
 
     async fn write(
-        peripheral: &mut Peripheral<Delegated>,
+        &self,
         characteristic: &Characteristic,
         data: &[u8],
-    ) -> Result<(), UpliftError> {
-        peripheral.write(characteristic, data).await;
-
-        Ok(())
+    ) -> Result<(), anyhow::Error> {
+        self.peripheral
+            .write(characteristic, data, WriteType::WithoutResponse)
+            .await
+            .with_context(|| format!("Failed to write data to {:?}", self.peripheral.id()))
     }
 }
 
@@ -328,48 +222,154 @@ fn estimate_height((low, high): (u8, u8), last_height: isize) -> isize {
 
 impl Drop for Desk {
     fn drop(&mut self) {
-        self.manager.disconnect(&self.peripheral);
+        executor::block_on(self.peripheral.disconnect()).unwrap();
     }
 }
 
+// async fn connect() -> Result<(Manager, Peripheral), anyhow::Error> {
+//     let mut connection_attempt = 0;
+//
+//     let mut result = Err(anyhow!("Initializing Error"));
+//     while result.is_err() && connection_attempt < MAX_CONNECTION_ATTEMPTS {
+//         connection_attempt += 1;
+//         let manager = Manager::new().await?;
+//
+//         let adapters = manager.adapters().await?;
+//         let central = adapters
+//             .into_iter()
+//             .next()
+//             .ok_or_else(|| anyhow!("Couldn't find an adapter"))?;
+//
+//         log::debug!("Using adapter: {:?}", central.adapter_info().await?);
+//
+//         // scan for our desk service
+//         central
+//             .start_scan(ScanFilter {
+//                 services: vec![DESK_SERVICE_UUID],
+//             })
+//             .await?;
+//
+//         // try to find services for 10 seconds
+//         for _ in 0..100 {
+//             time::sleep(Duration::from_millis(100)).await;
+//
+//             if let Some(peripheral) = central.peripherals().await?.into_iter().next() {
+//                 log::debug!("Found a desk: {:?}", peripheral.id());
+//
+//                 result = peripheral
+//                     .connect()
+//                     .await
+//                     .map(|_| (manager, peripheral))
+//                     .context("Failed to connect to peripheral");
+//
+//                 if let Err(error) = &result {
+//                     log::warn!(
+//                         "Connection attempt {} failed: {:?}",
+//                         connection_attempt,
+//                         error
+//                     );
+//                 }
+//
+//                 break;
+//             }
+//         }
+//
+//         central.stop_scan().await?;
+//     }
+//
+//     result
+// }
+
+async fn connect() -> Result<(Manager, Peripheral), anyhow::Error> {
+    let mut manager_attempts = 0;
+
+    let mut result = Err(anyhow!("Initializing Error"));
+    while result.is_err() && manager_attempts < MAX_MANAGER_RETRIES {
+        manager_attempts += 1;
+
+        log::debug!("Connecting to Bluetooth Manager");
+        let manager = Manager::new().await?;
+
+        let adapters = manager.adapters().await?;
+        let central = adapters
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("Couldn't find an adapter"))?;
+
+        log::debug!("Using adapter: {:?}", central.adapter_info().await?);
+
+        let mut events = central.events().await?;
+
+        // scan for our desk service
+        central
+            .start_scan(ScanFilter {
+                services: vec![DESK_SERVICE_UUID],
+            })
+            .await?;
+
+        let mut connection_attempt = 0;
+        while connection_attempt <= MAX_CONNECTION_ATTEMPTS {
+            match events.next().await {
+                Some(DeviceDiscovered(id))
+                | Some(DeviceUpdated(id))
+                | Some(DeviceConnected(id)) => {
+                    connection_attempt += 1;
+
+                    let peripheral = central.peripheral(&id).await?;
+
+                    log::debug!("Discovered peripheral {:?}", peripheral.id());
+
+                    match peripheral.connect().await {
+                        Ok(_) => {
+                            result = Ok((manager, peripheral));
+                            break;
+                        }
+                        Err(error) => log::warn!(
+                            "Connection attempt {} failed: {:?}",
+                            connection_attempt,
+                            error
+                        ),
+                    }
+                }
+                Some(event) => log::trace!("{:?}", event),
+                None => {
+                    result = Err(anyhow!("Our adapter stopped looking for peripherals"));
+                    break;
+                }
+            }
+        }
+
+        central.stop_scan().await?;
+    }
+
+    result
+}
+
 fn get_characteristics(
-    characteristics: Vec<Characteristic>,
-) -> Result<(Characteristic, Characteristic, Characteristic), UpliftError> {
+    characteristics: BTreeSet<Characteristic>,
+) -> Result<(Characteristic, Characteristic, Characteristic), anyhow::Error> {
     let mut data_in_characteristic = None;
     let mut data_out_characteristic = None;
     let mut name_characteristic = None;
 
     for characteristic in characteristics.into_iter() {
-        if let Some(uuid) = characteristic.uuid() {
-            if *DESK_DATA_IN == uuid {
-                data_in_characteristic = Some(characteristic);
-            } else if *DESK_DATA_OUT == uuid {
-                data_out_characteristic = Some(characteristic);
-            } else if *DESK_NAME == uuid {
-                name_characteristic = Some(characteristic);
-            }
+        if DESK_DATA_IN_UUID == characteristic.uuid {
+            data_in_characteristic = Some(characteristic);
+        } else if DESK_DATA_OUT_UUID == characteristic.uuid {
+            data_out_characteristic = Some(characteristic);
+        } else if DESK_NAME_UUID == characteristic.uuid {
+            name_characteristic = Some(characteristic);
         }
     }
 
     Ok((
-        data_in_characteristic
-            .ok_or_else(|| UpliftError::new("Couldn't get data-in characteristic"))?,
-        data_out_characteristic
-            .ok_or_else(|| UpliftError::new("Couldn't find data-out characteristic"))?,
-        name_characteristic.ok_or_else(|| UpliftError::new("Couldn't find name characteristic"))?,
+        data_in_characteristic.ok_or_else(|| anyhow!("Couldn't get data-in characteristic"))?,
+        data_out_characteristic.ok_or_else(|| anyhow!("Couldn't find data-out characteristic"))?,
+        name_characteristic.ok_or_else(|| anyhow!("Couldn't find name characteristic"))?,
     ))
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-
-    /// create and redrop our desk continuously, looking for invalid usages of objc
-    #[tokio::test]
-    async fn dropping() {
-        for _ in 0..10 {
-            let desk = Desk::new().await.unwrap();
-            drop(desk);
-        }
-    }
 }
