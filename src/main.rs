@@ -33,11 +33,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 .default_value("60"),
         )
         .subcommand(SubCommand::with_name("listen"))
-        // .subcommand(SubCommand::with_name("set").arg(Arg::with_name("height").required(true)))
+        // .subcommand(SubCommand::with(Arg::with_name("height").required(true)))
         .subcommand(SubCommand::with_name("sit").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("stand").arg(Arg::with_name("save")))
         .subcommand(SubCommand::with_name("toggle"))
-        .subcommand(SubCommand::with_name("query").arg(Arg::with_name("signal")))
+        .subcommand(SubCommand::with_name("query"))
         .get_matches();
 
     setup_logging(&matches)?;
@@ -122,11 +122,7 @@ async fn run_command(matches: &ArgMatches<'_>) -> Result<(), anyhow::Error> {
             desk.query_height().await?;
         }
         ("query", Some(_sub_matches)) => {
-            // if sub_matches.value_of("signal").is_some() {
-            //     println!("{}", desk.rssi());
-            // } else {
             println!("{}", desk.query_height().await?);
-            // }
         }
         _ => unreachable!(),
     }

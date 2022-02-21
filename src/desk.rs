@@ -1,16 +1,15 @@
-use btleplug::api::{
-    bleuuid, Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification,
-    WriteType,
-};
-use btleplug::platform::{Manager, Peripheral};
-
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-// use btleplug::api::{Central, Manager, Peripheral};
+
+use btleplug::api::{
+    bleuuid, Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification,
+    WriteType,
+};
+use btleplug::platform::{Manager, Peripheral};
 
 use anyhow::{anyhow, Context};
 use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
@@ -33,11 +32,7 @@ const DESK_DATA_IN_UUID: Uuid = bleuuid::uuid_from_u16(0xff01);
 const DESK_DATA_OUT_UUID: Uuid = bleuuid::uuid_from_u16(0xff02);
 const DESK_NAME_UUID: Uuid = bleuuid::uuid_from_u16(0xff06);
 
-const MAX_MANAGER_RETRIES: usize = 5;
-const MAX_CONNECTION_ATTEMPTS: usize = 5;
-
 pub struct Desk {
-    // rssi: i64,
     height: Arc<AtomicIsize>,
     raw_height: Arc<(AtomicU8, AtomicU8)>,
     data_in_characteristic: Characteristic,
@@ -47,16 +42,15 @@ pub struct Desk {
 
 impl Desk {
     pub async fn new() -> Result<Desk, anyhow::Error> {
-        // let manager = Manager::new().await?;
         let (manager, peripheral) = connect().await?;
 
-        log::debug!("Connected to peripheral: {:?}", peripheral.id());
+        log::debug!("{:?} - Connected to peripheral", peripheral.address());
 
-        // start discovering characteristics on our peripheral so we can `
+        // start discovering characteristics on our peripheral
         peripheral
             .discover_services()
             .await
-            .context("Discovering Services")?;
+            .with_context(|| format!("{:?} - Discovering Services", peripheral.address()))?;
 
         let (data_in_characteristic, data_out_characteristic, _name_characteristic) =
             get_characteristics(peripheral.characteristics())?;
@@ -73,15 +67,24 @@ impl Desk {
             peripheral
                 .subscribe(&data_out_characteristic)
                 .await
-                .context("Subscribing to desk updates")?;
+                .with_context(|| {
+                    format!("{:?} - Subscribing to desk updates", peripheral.address())
+                })?;
 
+            let address = peripheral.address();
             tokio::spawn(async move {
                 while let Some(ValueNotification { value, .. }) = height_receiver.next().await {
                     let last_height = updated_height.load(Ordering::Relaxed);
                     let (low, high) = get_raw_height(&value);
                     let height = estimate_height((low, high), last_height);
 
-                    log::trace!("Updated Height: ({:x},{:x}) -> {:x}", low, high, height);
+                    log::trace!(
+                        "{:?} - Updated Height: ({:x},{:x}) -> {:x}",
+                        address,
+                        low,
+                        high,
+                        height
+                    );
                     updated_height.store(height, Ordering::Relaxed);
                     updated_raw_height.0.store(low, Ordering::Relaxed);
                     updated_raw_height.1.store(high, Ordering::Relaxed);
@@ -104,10 +107,6 @@ impl Desk {
         Ok(desk)
     }
 
-    // pub fn rssi(&self) -> i64 {
-    //     self.rssi
-    // }
-    //
     pub fn height(&self) -> isize {
         self.height.load(Ordering::Relaxed)
     }
@@ -119,50 +118,36 @@ impl Desk {
         )
     }
 
-    // pub async fn move_up(&self) -> Result<(), anyhow::Error> {
-    //     // debug!("Move up @ height {}", self.height());
-    //
-    //     self.write(&self.data_in_characteristic, &UP_PACKET).await?;
-    //
-    //     Ok(())
-    // }
-    //
-    // pub async fn move_down(&self) -> Result<(), anyhow::Error> {
-    //     // debug!("Move down @ height {}", self.height());
-    //
-    //     self.write(&self.data_in_characteristic, &DOWN_PACKET).await
-    // }
-
     pub async fn save_sit(&self) -> Result<(), anyhow::Error> {
-        log::debug!("Save sit");
+        log::debug!("{:?} - Save sit", self.peripheral.address());
 
         self.write(&self.data_in_characteristic, &SAVE_SIT_PACKET)
             .await
-            .context("Saving Sit")
+            .with_context(|| format!("{:?} - Saving Sit", self.peripheral.address()))
     }
 
     pub async fn save_stand(&self) -> Result<(), anyhow::Error> {
-        log::debug!("Save stand");
+        log::debug!("{:?} - Save stand", self.peripheral.address());
 
         self.write(&self.data_in_characteristic, &SAVE_STAND_PACKET)
             .await
-            .context("Saving Stand")
+            .with_context(|| format!("{:?} - Saving Stand", self.peripheral.address()))
     }
 
     pub async fn sit(&self) -> Result<(), anyhow::Error> {
-        log::debug!("Sit");
+        log::debug!("{:?} - Sit", self.peripheral.address());
 
         self.write(&self.data_in_characteristic, &SIT_PACKET)
             .await
-            .context("Sitting")
+            .with_context(|| format!("{:?} - Sitting", self.peripheral.address()))
     }
 
     pub async fn stand(&self) -> Result<(), anyhow::Error> {
-        log::debug!("Stand");
+        log::debug!("{:?} - Stand", self.peripheral.address());
 
         self.write(&self.data_in_characteristic, &STAND_PACKET)
             .await
-            .context("Standing")
+            .with_context(|| format!("{:?} - Standing", self.peripheral.address()))
     }
 
     pub async fn query_height(&self) -> Result<isize, anyhow::Error> {
@@ -170,7 +155,7 @@ impl Desk {
         self.height.store(0, Ordering::Relaxed);
         self.write(&self.data_in_characteristic, &QUERY_PACKET)
             .await
-            .context("Querying")?;
+            .with_context(|| format!("{:?} - Querying", self.peripheral.address()))?;
 
         // wait for our height to update (is there a better way than polling?)
         while self.height.load(Ordering::Relaxed) <= 0 {
@@ -180,13 +165,6 @@ impl Desk {
         Ok(self.height.load(Ordering::Relaxed))
     }
 
-    // fn read(&self, characteristic: &Characteristic) -> Result<(), UpliftError> {
-    //     self.peripheral.on_notification()
-    //
-    //     self.peripheral.read(characteristic)?;
-    //     Ok(())
-    // }
-
     async fn write(
         &self,
         characteristic: &Characteristic,
@@ -195,7 +173,7 @@ impl Desk {
         self.peripheral
             .write(characteristic, data, WriteType::WithoutResponse)
             .await
-            .with_context(|| format!("Failed to write data to {:?}", self.peripheral.id()))
+            .with_context(|| format!("{:?} - Failed to write data", self.peripheral.address()))
     }
 }
 
@@ -226,121 +204,68 @@ impl Drop for Desk {
     }
 }
 
-// async fn connect() -> Result<(Manager, Peripheral), anyhow::Error> {
-//     let mut connection_attempt = 0;
-//
-//     let mut result = Err(anyhow!("Initializing Error"));
-//     while result.is_err() && connection_attempt < MAX_CONNECTION_ATTEMPTS {
-//         connection_attempt += 1;
-//         let manager = Manager::new().await?;
-//
-//         let adapters = manager.adapters().await?;
-//         let central = adapters
-//             .into_iter()
-//             .next()
-//             .ok_or_else(|| anyhow!("Couldn't find an adapter"))?;
-//
-//         log::debug!("Using adapter: {:?}", central.adapter_info().await?);
-//
-//         // scan for our desk service
-//         central
-//             .start_scan(ScanFilter {
-//                 services: vec![DESK_SERVICE_UUID],
-//             })
-//             .await?;
-//
-//         // try to find services for 10 seconds
-//         for _ in 0..100 {
-//             time::sleep(Duration::from_millis(100)).await;
-//
-//             if let Some(peripheral) = central.peripherals().await?.into_iter().next() {
-//                 log::debug!("Found a desk: {:?}", peripheral.id());
-//
-//                 result = peripheral
-//                     .connect()
-//                     .await
-//                     .map(|_| (manager, peripheral))
-//                     .context("Failed to connect to peripheral");
-//
-//                 if let Err(error) = &result {
-//                     log::warn!(
-//                         "Connection attempt {} failed: {:?}",
-//                         connection_attempt,
-//                         error
-//                     );
-//                 }
-//
-//                 break;
-//             }
-//         }
-//
-//         central.stop_scan().await?;
-//     }
-//
-//     result
-// }
-
 async fn connect() -> Result<(Manager, Peripheral), anyhow::Error> {
-    let mut manager_attempts = 0;
+    log::debug!("Connecting to Bluetooth Manager");
+    let manager = Manager::new().await?;
 
-    let mut result = Err(anyhow!("Initializing Error"));
-    while result.is_err() && manager_attempts < MAX_MANAGER_RETRIES {
-        manager_attempts += 1;
+    let adapters = manager.adapters().await?;
+    let central = adapters
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("Couldn't find an adapter"))?;
 
-        log::debug!("Connecting to Bluetooth Manager");
-        let manager = Manager::new().await?;
+    log::debug!("Using adapter: {:?}", central.adapter_info().await?);
 
-        let adapters = manager.adapters().await?;
-        let central = adapters
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("Couldn't find an adapter"))?;
+    let mut events = central.events().await?;
 
-        log::debug!("Using adapter: {:?}", central.adapter_info().await?);
+    // scan for our desk service
+    central
+        .start_scan(ScanFilter {
+            services: vec![DESK_SERVICE_UUID],
+        })
+        .await?;
 
-        let mut events = central.events().await?;
+    let mut result = Err(anyhow!("Our adapter stopped looking for peripherals"));
+    while let Some(event) = events.next().await {
+        match event {
+            DeviceDiscovered(id) | DeviceUpdated(id) | DeviceConnected(id) => {
+                let peripheral = central
+                    .peripheral(&id)
+                    .await
+                    .context(format!("{:?} - Couldn't get our Peripheral", id))?;
 
-        // scan for our desk service
-        central
-            .start_scan(ScanFilter {
-                services: vec![DESK_SERVICE_UUID],
-            })
-            .await?;
+                log::trace!("{:?} - Discovered peripheral", peripheral.address());
 
-        let mut connection_attempt = 0;
-        while connection_attempt <= MAX_CONNECTION_ATTEMPTS {
-            match events.next().await {
-                Some(DeviceDiscovered(id))
-                | Some(DeviceUpdated(id))
-                | Some(DeviceConnected(id)) => {
-                    connection_attempt += 1;
+                let properties = peripheral.properties().await.context(format!(
+                    "{:?} - Couldn't get properties",
+                    peripheral.address()
+                ))?;
 
-                    let peripheral = central.peripheral(&id).await?;
+                if let Some(properties) = &properties {
+                    // even with the ScanFilter we still get initial unmatched devices, filter those out
+                    if properties.services.contains(&DESK_SERVICE_UUID) {
+                        log::debug!("{:?} - Attempting to connect", peripheral.address());
 
-                    log::debug!("Discovered peripheral {:?}", peripheral.id());
+                        peripheral
+                            .connect()
+                            .await
+                            .context(format!("{:?} - Connection failed", peripheral.address()))?;
 
-                    match peripheral.connect().await {
-                        Ok(_) => {
-                            result = Ok((manager, peripheral));
-                            break;
-                        }
-                        Err(error) => log::warn!(
-                            "Connection attempt {} failed: {:?}",
-                            connection_attempt,
-                            error
-                        ),
+                        result = Ok((manager, peripheral));
+                        break;
                     }
                 }
-                Some(event) => log::trace!("{:?}", event),
-                None => {
-                    result = Err(anyhow!("Our adapter stopped looking for peripherals"));
-                    break;
-                }
-            }
-        }
 
-        central.stop_scan().await?;
+                log::trace!(
+                    "{:?} - Peripheral didn't contain the Desk Service",
+                    properties
+                );
+            }
+            event => log::trace!("Unhandled Event: {:?}", event),
+        }
     }
+
+    central.stop_scan().await?;
 
     result
 }
@@ -370,6 +295,4 @@ fn get_characteristics(
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-}
+mod test {}
