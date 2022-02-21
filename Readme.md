@@ -28,12 +28,6 @@ Continuously get the height
 uplift listen
 ```
 
-### Set An Arbitrary Height
-This doesn't work that well as it has a hard time actually aligning the height correctly
-```bash
-uplift set 384
-```
-
 ## References
 * https://github.com/justintout/uplift-reconnect
 * https://github.com/justintout/uplift-reconnect-web

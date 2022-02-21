@@ -1,19 +1,17 @@
+use anyhow::{anyhow, Context};
+use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
+use btleplug::api::{
+    bleuuid, Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification,
+    WriteType,
+};
+use btleplug::platform::{Manager, Peripheral};
+use futures::{executor, StreamExt};
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-
-use btleplug::api::{
-    bleuuid, Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification,
-    WriteType,
-};
-use btleplug::platform::{Manager, Peripheral};
-
-use anyhow::{anyhow, Context};
-use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
-use futures::{executor, StreamExt};
 use tokio::time;
 use uuid::Uuid;
 
@@ -293,6 +291,3 @@ fn get_characteristics(
         name_characteristic.ok_or_else(|| anyhow!("Couldn't find name characteristic"))?,
     ))
 }
-
-#[cfg(test)]
-mod test {}
