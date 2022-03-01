@@ -9,7 +9,7 @@ jobs:
     steps:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install libdbus-1-dev
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -25,7 +25,7 @@ jobs:
     steps:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install libdbus-1-dev
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install libdbus-1-dev
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -59,7 +59,7 @@ jobs:
     steps:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install libdbus-1-dev
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
