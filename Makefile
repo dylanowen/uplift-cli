@@ -7,10 +7,10 @@ fix:
 	cargo fix --allow-staged
 
 fmt:
-	cargo fmt
+	cargo fmt --all -- --check
 
 lint:
-	cargo clippy
+	cargo clippy -- -D warnings
 	-cargo audit
 
 # "This will essentially compile the packages without performing the final step of code generation, which is faster than running cargo build."
