@@ -75,7 +75,7 @@ dependencies = [
  "serde-xml-rs",
  "thiserror",
  "tokio",
- "uuid 1.1.2",
+ "uuid",
 ]
 
 [[package]]
@@ -110,7 +110,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
- "uuid 1.1.2",
+ "uuid",
  "windows",
 ]
 
@@ -490,7 +490,7 @@ dependencies = [
  "log",
  "once_cell",
  "static_assertions",
- "uuid 1.1.2",
+ "uuid",
 ]
 
 [[package]]
@@ -888,14 +888,8 @@ dependencies = [
  "lazy_static",
  "log",
  "tokio",
- "uuid 0.8.2",
+ "uuid",
 ]
-
-[[package]]
-name = "uuid"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "uuid"
