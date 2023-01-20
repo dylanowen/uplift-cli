@@ -1,8 +1,9 @@
 use crate::desk::Desk;
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use clap::{Parser, Subcommand};
 use std::convert::identity;
+use std::future::Future;
 use std::time::Duration;
 use tokio::time;
 use tokio::time::timeout;
@@ -33,15 +34,21 @@ enum Commands {
         #[clap(subcommand)]
         save: Option<SaveCommand>,
     },
+    /// Retry the Sit operation 3 times if the desk doesn't complete it
+    ForceSit,
     /// Stand or use `save` to store the current height
     Stand {
         #[clap(subcommand)]
         save: Option<SaveCommand>,
     },
+    /// Retry the Stand operation 3 times if the desk doesn't complete it
+    ForceStand,
     /// Get the current desk height
     Query,
     /// Sit -> Stand or Stand -> Sit
     Toggle,
+    /// Retry the Toggle operation 3 times if the desk doesn't complete it
+    ForceToggle,
     /// Listen for height changes
     Listen,
 }
@@ -81,6 +88,7 @@ fn setup_logging(args: &Args) -> Result<(), anyhow::Error> {
     builder.try_init().context("Failed to setup logger")
 }
 
+const HALF_HEIGHT: isize = 255;
 async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
     let desk = Desk::new().await?;
 
@@ -95,6 +103,9 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
             // let the packet actually send
             desk.query_height().await?;
         }
+        Commands::ForceSit => {
+            force_sit(&desk).await?;
+        }
         Commands::Stand { save } => {
             if save.is_some() {
                 desk.save_stand().await?;
@@ -105,12 +116,15 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
             // let the packet actually send
             desk.query_height().await?;
         }
+        Commands::ForceStand => {
+            force_stand(&desk).await?;
+        }
         Commands::Query => {
             println!("{}", desk.query_height().await?);
         }
         Commands::Toggle => {
             let height = desk.query_height().await?;
-            if height > 255 {
+            if height > HALF_HEIGHT {
                 desk.sit().await?;
             } else {
                 desk.stand().await?;
@@ -118,6 +132,14 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
 
             // let the packet actually send
             desk.query_height().await?;
+        }
+        Commands::ForceToggle => {
+            let height = desk.query_height().await?;
+            if height > HALF_HEIGHT {
+                force_sit(&desk).await?;
+            } else {
+                force_stand(&desk).await?;
+            }
         }
         Commands::Listen => {
             let mut height = 0;
@@ -135,4 +157,61 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+async fn force_sit(desk: &Desk) -> Result<(), anyhow::Error> {
+    force(
+        || async { desk.sit().await },
+        |height| height < HALF_HEIGHT,
+        desk,
+    )
+    .await
+}
+
+async fn force_stand(desk: &Desk) -> Result<(), anyhow::Error> {
+    force(
+        || async { desk.stand().await },
+        |height| height > HALF_HEIGHT,
+        desk,
+    )
+    .await
+}
+
+const FORCE_ATTEMPTS: usize = 3;
+async fn force<AFut>(
+    mut action: impl FnMut() -> AFut,
+    mut done: impl FnMut(isize) -> bool,
+    desk: &Desk,
+) -> Result<(), anyhow::Error>
+where
+    AFut: Future<Output = Result<(), anyhow::Error>>,
+{
+    let mut attempts = 0;
+    let mut previous_height = desk.query_height().await?;
+
+    while attempts < FORCE_ATTEMPTS {
+        attempts += 1;
+        log::trace!("Running forced attempt {attempts}");
+        action().await?;
+
+        'query_height: loop {
+            time::sleep(Duration::from_millis(1000)).await;
+            let next_height = desk.height();
+            log::trace!("Height moved from: {previous_height} -> {next_height}");
+
+            // we've stopped moving so check our height
+            if previous_height == next_height {
+                if done(next_height) {
+                    return Ok(());
+                } else {
+                    break 'query_height;
+                }
+            }
+            previous_height = next_height;
+        }
+    }
+
+    Err(anyhow!(
+        "Failed to force the desk to the intended height after {attempts} attempts"
+    ))
 }
