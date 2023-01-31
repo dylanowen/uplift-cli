@@ -4,13 +4,14 @@ SHELL:=/bin/bash
 .PHONY: fix fmt lint check build release test pre-commit install default clean
 
 fix:
-	cargo fix --allow-staged
+	cargo fix --all-targets --all-features --allow-staged
+	cargo clippy --fix --all-targets --all-features --allow-staged
 
 fmt:
 	cargo fmt --all -- --check
 
 lint:
-	cargo clippy -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 	-cargo audit
 
 # "This will essentially compile the packages without performing the final step of code generation, which is faster than running cargo build."

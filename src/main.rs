@@ -147,7 +147,7 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
                 let next_height = desk.height();
                 if height != next_height {
                     let (low, high) = desk.raw_height();
-                    println!("height: ({:x},{:x}) -> {}", low, high, next_height);
+                    println!("height: ({low:x},{high:x}) -> {next_height}");
                 }
                 height = next_height;
 
