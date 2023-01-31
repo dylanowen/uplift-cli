@@ -230,7 +230,7 @@ async fn connect() -> Result<(Manager, Peripheral), anyhow::Error> {
                 let peripheral = central
                     .peripheral(&id)
                     .await
-                    .context(format!("{:?} - Couldn't get our Peripheral", id))?;
+                    .context(format!("{id:?} - Couldn't get our Peripheral"))?;
 
                 log::trace!("{:?} - Discovered peripheral", peripheral.address());
 
