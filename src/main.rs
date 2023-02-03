@@ -177,7 +177,7 @@ async fn force_stand(desk: &Desk) -> Result<(), anyhow::Error> {
     .await
 }
 
-const FORCE_ATTEMPTS: usize = 3;
+const FORCE_ATTEMPTS: usize = 5;
 async fn force<AFut>(
     mut action: impl FnMut() -> AFut,
     mut done: impl FnMut(isize) -> bool,
