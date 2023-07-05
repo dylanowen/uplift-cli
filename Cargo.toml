@@ -23,7 +23,7 @@ tokio = { version = "1.29", features = ["macros", "time", "rt-multi-thread"] }
 futures = "0.3"
 
 # Bluetooth support
-btleplug = "0.10"
+btleplug = "0.11"
 uuid = "1.4"
 
 # Command line parsing
