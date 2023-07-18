@@ -1,14 +1,17 @@
-use crate::desk::Desk;
-
-use anyhow::{anyhow, Context};
-use clap::{Parser, Subcommand};
 use std::convert::identity;
 use std::future::Future;
 use std::time::Duration;
+
+use anyhow::{anyhow, Context};
+use clap::{Parser, Subcommand};
 use tokio::time;
 use tokio::time::timeout;
 
+use crate::desk::{Desk, AVG_MID_HEIGHT, AVG_SITTING_HEIGHT, AVG_STANDING_HEIGHT};
+
 mod desk;
+
+const FORCE_ATTEMPTS: usize = 5;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -34,20 +37,20 @@ enum Commands {
         #[clap(subcommand)]
         save: Option<SaveCommand>,
     },
-    /// Retry the Sit operation 3 times if the desk doesn't complete it
+    /// Retry the Sit operation 5 times if the desk doesn't complete it
     ForceSit,
     /// Stand or use `save` to store the current height
     Stand {
         #[clap(subcommand)]
         save: Option<SaveCommand>,
     },
-    /// Retry the Stand operation 3 times if the desk doesn't complete it
+    /// Retry the Stand operation 5 times if the desk doesn't complete it
     ForceStand,
-    /// Get the current desk height
+    /// Get the estimated desk height in inches
     Query,
     /// Sit -> Stand or Stand -> Sit
     Toggle,
-    /// Retry the Toggle operation 3 times if the desk doesn't complete it
+    /// Retry the Toggle operation 5 times if the desk doesn't complete it
     ForceToggle,
     /// Listen for height changes
     Listen,
@@ -88,7 +91,6 @@ fn setup_logging(args: &Args) -> Result<(), anyhow::Error> {
     builder.try_init().context("Failed to setup logger")
 }
 
-const HALF_HEIGHT: isize = 255;
 async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
     let desk = Desk::new().await?;
 
@@ -120,11 +122,11 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
             force_stand(&desk).await?;
         }
         Commands::Query => {
-            println!("{}", desk.query_height().await?);
+            println!("{}", desk.query_height().await? as f32 / 10.0);
         }
         Commands::Toggle => {
             let height = desk.query_height().await?;
-            if height > HALF_HEIGHT {
+            if height > AVG_MID_HEIGHT {
                 desk.sit().await?;
             } else {
                 desk.stand().await?;
@@ -135,7 +137,7 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
         }
         Commands::ForceToggle => {
             let height = desk.query_height().await?;
-            if height > HALF_HEIGHT {
+            if height > AVG_MID_HEIGHT {
                 force_sit(&desk).await?;
             } else {
                 force_stand(&desk).await?;
@@ -162,7 +164,7 @@ async fn run_command(args: &Args) -> Result<(), anyhow::Error> {
 async fn force_sit(desk: &Desk) -> Result<(), anyhow::Error> {
     force(
         || async { desk.sit().await },
-        |height| height < HALF_HEIGHT,
+        |height| height < (AVG_MID_HEIGHT + AVG_SITTING_HEIGHT) / 2,
         desk,
     )
     .await
@@ -171,13 +173,12 @@ async fn force_sit(desk: &Desk) -> Result<(), anyhow::Error> {
 async fn force_stand(desk: &Desk) -> Result<(), anyhow::Error> {
     force(
         || async { desk.stand().await },
-        |height| height > HALF_HEIGHT,
+        |height| height > (AVG_MID_HEIGHT + AVG_STANDING_HEIGHT) / 2,
         desk,
     )
     .await
 }
 
-const FORCE_ATTEMPTS: usize = 5;
 async fn force<AFut>(
     mut action: impl FnMut() -> AFut,
     mut done: impl FnMut(isize) -> bool,

@@ -1,6 +1,6 @@
 [package]
 name = "uplift-cli"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Dylan Owen <dyltotheo@gmail.com>"]
 description = "A cli tool to control a bluetooth enabled uplift desk"
 readme = "Readme.md"
