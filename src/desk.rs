@@ -182,7 +182,7 @@ fn get_raw_height(data: &[u8]) -> (u8, u8) {
 
 // 25.2"
 pub const MIN_PHYSICAL_HEIGHT: isize = 252;
-// 25.0" + 0xff
+// 25.2" + 0xff
 pub const MAX_PHYSICAL_HEIGHT: isize = MIN_PHYSICAL_HEIGHT + 0xff;
 pub const MID_PHYSICAL_HEIGHT: isize = (MIN_PHYSICAL_HEIGHT + MAX_PHYSICAL_HEIGHT) / 2;
 // 26.0" based on a 5'6" person
