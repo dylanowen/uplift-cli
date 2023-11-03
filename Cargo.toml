@@ -19,7 +19,7 @@ env_logger = "0.10"
 lazy_static = "1.4"
 
 # async
-tokio = { version = "1.29", features = ["macros", "time", "rt-multi-thread"] }
+tokio = { version = "1.32", features = ["macros", "time", "rt-multi-thread"] }
 futures = "0.3"
 
 # Bluetooth support
@@ -27,7 +27,7 @@ btleplug = "0.11"
 uuid = "1.4"
 
 # Command line parsing
-clap = { version =  "4.3", features = ["derive", "env"] }
+clap = { version =  "4.4", features = ["derive", "env"] }
 
 # Error handling
 anyhow = "1.0"
