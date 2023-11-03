@@ -1,3 +1,10 @@
+use std::collections::BTreeSet;
+use std::sync::atomic::AtomicIsize;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::{anyhow, Context};
 use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
 use btleplug::api::{
@@ -6,12 +13,6 @@ use btleplug::api::{
 };
 use btleplug::platform::{Manager, Peripheral};
 use futures::{executor, StreamExt};
-use std::collections::BTreeSet;
-use std::sync::atomic::AtomicIsize;
-use std::sync::atomic::AtomicU8;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::time;
 use uuid::Uuid;
 
@@ -150,7 +151,7 @@ impl Desk {
 
     pub async fn query_height(&self) -> Result<isize, anyhow::Error> {
         // since we're querying, clear our height so we can check if it's updated
-        self.height.store(0, Ordering::Relaxed);
+        self.height.store(-1, Ordering::Relaxed);
         self.write(&self.data_in_characteristic, &QUERY_PACKET)
             .await
             .with_context(|| format!("{:?} - Querying", self.peripheral.address()))?;
@@ -179,21 +180,34 @@ fn get_raw_height(data: &[u8]) -> (u8, u8) {
     (data[5], data[7])
 }
 
+// 25.2"
+pub const MIN_PHYSICAL_HEIGHT: isize = 252;
+// 25.2" + 0xff
+pub const MAX_PHYSICAL_HEIGHT: isize = MIN_PHYSICAL_HEIGHT + 0xff;
+pub const MID_PHYSICAL_HEIGHT: isize = (MIN_PHYSICAL_HEIGHT + MAX_PHYSICAL_HEIGHT) / 2;
+// 26.0" based on a 5'6" person
+pub const AVG_SITTING_HEIGHT: isize = 260;
+// 40.5" based on a 5'6" person
+pub const AVG_STANDING_HEIGHT: isize = 405;
+pub const AVG_MID_HEIGHT: isize = (AVG_SITTING_HEIGHT + AVG_STANDING_HEIGHT) / 2;
+
+/// The height ranges from 0x00 to 0xff. 0x01 roughly seems to be 0.1"
 fn estimate_height((low, high): (u8, u8), last_height: isize) -> isize {
-    let mut low = low as isize;
-    let mut high = high as isize;
+    let low = low as isize;
+    let high = high as isize;
 
-    if low > high {
-        if last_height < 0xff {
-            // we're probably low so go below 0
-            low -= 0xff;
+    let raw_height = if low >= 0xfd {
+        // anything outside of this range seems to be "special"
+        if last_height < MID_PHYSICAL_HEIGHT {
+            high
         } else {
-            // we're probably high so go above 0xff
-            high += 0xff;
+            low
         }
-    }
+    } else {
+        low
+    };
 
-    low + high
+    MIN_PHYSICAL_HEIGHT + raw_height
 }
 
 impl Drop for Desk {
