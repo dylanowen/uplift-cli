@@ -24,7 +24,7 @@ futures = "0.3"
 
 # Bluetooth support
 btleplug = "0.11"
-uuid = "1.5"
+uuid = "1.6"
 
 # Command line parsing
 clap = { version =  "4.4", features = ["derive", "env"] }
