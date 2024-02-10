@@ -27,7 +27,7 @@ btleplug = "0.11"
 uuid = "1.7"
 
 # Command line parsing
-clap = { version =  "4.4", features = ["derive", "env"] }
+clap = { version =  "4.5", features = ["derive", "env"] }
 
 # Error handling
 anyhow = "1.0"
