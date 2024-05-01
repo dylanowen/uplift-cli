@@ -20,7 +20,7 @@ lazy_static = "1.4"
 
 # async
 tokio = { version = "1.37", features = ["macros", "time", "rt-multi-thread"] }
-futures = "0.3"
+futures = "0.3.30"
 
 # Bluetooth support
 btleplug = "0.11.5"
