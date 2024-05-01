@@ -14,7 +14,7 @@ name = "uplift"
 path = "src/main.rs"
 
 [dependencies]
-log = "0.4"
+log = "0.4.21"
 env_logger = "0.11"
 lazy_static = "1.4"
 
