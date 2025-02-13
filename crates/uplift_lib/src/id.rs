@@ -1,96 +1,41 @@
-use crate::{UpliftDesk, DESK_SERVICE_UUID};
-use anyhow::anyhow;
+use crate::UpliftDesk;
 use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
-use btleplug::api::{bleuuid, Central, Peripheral as _, ScanFilter};
-use btleplug::platform::{Adapter, Peripheral, PeripheralId};
+use btleplug::api::{Central, CentralEvent, ScanFilter};
+use btleplug::platform::PeripheralId;
 use btleplug::Result;
-use futures::StreamExt;
+use futures::{ready, Stream};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::{mem, result};
-use tokio::select;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use uuid::Uuid;
 
-#[cfg(feature = "sqlx")]
-pub use sqlx_feature::*;
-
-#[cfg(feature = "serde")]
-pub use serde_feture::*;
+use crate::api::DESK_SERVICE_UUID;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Eq, Hash, Ord, PartialEq, PartialOrd, Clone, Debug)]
-pub struct UpliftDeskId(PeripheralId);
+pub struct UpliftDeskId(pub(crate) PeripheralId);
 
 impl UpliftDeskId {
-    pub(crate) fn new<I>(id: I) -> Self
+    pub fn new<I>(id: I) -> Self
     where
         I: Into<PeripheralId>,
     {
         Self(id.into())
     }
 
-    pub async fn scan(adapter: &Adapter) -> Receiver<Result<UpliftDeskId>> {
-        let (tx, rx) = mpsc::channel(10);
-
-        let adapter = adapter.clone();
-        tokio::spawn(async move {
-            async fn inner(adapter: &Adapter, tx: &Sender<Result<UpliftDeskId>>) -> Result<()> {
-                let mut events = adapter.events().await?;
-
-                // scan for our desk service
-                adapter
-                    .start_scan(ScanFilter {
-                        services: vec![DESK_SERVICE_UUID],
-                    })
-                    .await?;
-
-                loop {
-                    select! {
-                        event = events.next() => {
-                        match event {
-                            Some(DeviceDiscovered(id) | DeviceUpdated(id) | DeviceConnected(id)) => {
-                                if let Err(error) = tx.send(Ok(UpliftDeskId::new(id))).await {
-                                    // the receiver has been dropped
-                                    break Ok(())
-                                }
-                            }
-                            Some(event ) => log::trace!("Unhandled Event: {:?}", event),
-                            None => {
-                                // Our adapter stopped looking for peripherals
-                                break Err(btleplug::Error::NotConnected)
-                            }
-                        }
-                    }
-                    _ = tx.closed() => {
-                        break Ok(());
-                    }
-                    }
-                }
-            }
-
-            log::trace!("Started Scanning");
-
-            let result = inner(&adapter, &tx).await;
-            if let Err(error) = adapter.stop_scan().await {
-                log::error!("Failed to stop scanning: {error:?}");
-            } else {
-                log::trace!("Stopped Scanning")
-            }
-
-            if let Err(error) = result {
-                if let Err(error) = tx.send(Err(error)).await {
-                    log::warn!("Error when sending final error: {error:?}")
-                }
-            }
-        });
-
-        rx
+    pub async fn scan<C>(central: &C) -> Result<UpliftDeskIdStream<C>>
+    where
+        C: Central + Unpin + 'static,
+    {
+        UpliftDeskIdStream::new(central).await
     }
 
-    pub async fn connect(&self, adapter: &Adapter) -> Result<UpliftDesk> {
+    pub async fn connect<C>(&self, adapter: &C) -> Result<UpliftDesk<C::Peripheral>>
+    where
+        C: Central,
+        <C as Central>::Peripheral: 'static,
+    {
         UpliftDesk::new(self.0.clone(), adapter).await
     }
 }
@@ -101,8 +46,84 @@ impl From<Uuid> for UpliftDeskId {
     }
 }
 
+impl From<UpliftDeskId> for PeripheralId {
+    fn from(val: UpliftDeskId) -> Self {
+        val.0
+    }
+}
+
+pub struct UpliftDeskIdStream<C>
+where
+    C: Central + Unpin + 'static,
+{
+    events: Pin<Box<dyn Stream<Item = CentralEvent> + Send>>,
+    central: C,
+}
+
+impl<C> UpliftDeskIdStream<C>
+where
+    C: Central + Unpin,
+{
+    async fn new(central: &C) -> Result<Self> {
+        let central = central.clone();
+        let events = central.events().await?;
+
+        central
+            .start_scan(ScanFilter {
+                services: vec![DESK_SERVICE_UUID],
+            })
+            .await?;
+
+        log::trace!("Started Scanning");
+
+        Ok(Self { events, central })
+    }
+}
+
+impl<C> Stream for UpliftDeskIdStream<C>
+where
+    C: Central + Unpin,
+{
+    type Item = UpliftDeskId;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let next_id = loop {
+            match ready!(self.events.as_mut().poll_next(cx)) {
+                Some(DeviceDiscovered(id) | DeviceUpdated(id) | DeviceConnected(id)) => {
+                    break Some(UpliftDeskId::new(id))
+                }
+                Some(event) => log::trace!("Unhandled Event: {:?}", event),
+                None => break None,
+            }
+        };
+
+        Poll::Ready(next_id)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // We don't know the lower bound
+        (0, self.events.size_hint().1)
+    }
+}
+
+impl<C> Drop for UpliftDeskIdStream<C>
+where
+    C: Central + Unpin + 'static,
+{
+    fn drop(&mut self) {
+        let central = self.central.clone();
+        tokio::spawn(async move {
+            if let Err(error) = central.stop_scan().await {
+                log::error!("Failed to stop scanning: {error:?}");
+            } else {
+                log::trace!("Stopped Scanning")
+            }
+        });
+    }
+}
+
 #[cfg(feature = "serde")]
-mod serde_feture {
+mod serde_feature {
     use super::*;
 
     impl From<Vec<u8>> for UpliftDeskId {
@@ -126,6 +147,7 @@ mod sqlx_feature {
     use sqlx::encode::IsNull;
     use sqlx::error::BoxDynError;
     use sqlx::{Database, Decode, Encode, Type};
+    use std::result;
 
     impl<DB: Database> Type<DB> for UpliftDeskId
     where
@@ -147,7 +169,7 @@ mod sqlx_feature {
     {
         fn decode(
             value: <DB as Database>::ValueRef<'r>,
-        ) -> result::Result<UpliftDeskId, Box<dyn Error + 'static + Send + Sync>> {
+        ) -> result::Result<UpliftDeskId, BoxDynError> {
             let raw_value = <Vec<u8> as Decode<DB>>::decode(value)?;
 
             Ok(rmp_serde::from_slice(&raw_value)?)
@@ -197,26 +219,24 @@ mod sqlx_feature {
 
 #[cfg(test)]
 mod tests {
-    pub use super::*;
-    use btleplug::api::Manager as _;
-    use btleplug::platform::Manager;
-    #[tokio::test]
-    async fn test() {
-        let manager = Manager::new().await.unwrap();
 
-        let adapters = manager.adapters().await.unwrap();
-        let adapter = adapters.into_iter().next().unwrap();
-
-        let mut rx = UpliftDeskId::scan(&adapter).await;
-
-        let mut i = 10;
-        while let Some(result) = rx.recv().await {
-            println!("{result:?}");
-            i -= 1;
-
-            if i <= 0 {
-                break;
-            }
-        }
-    }
+    // #[tokio::test]
+    // async fn test() {
+    //     let manager = Manager::new().await.unwrap();
+    //
+    //     let adapters = manager.adapters().await.unwrap();
+    //     let adapter = adapters.into_iter().next().unwrap();
+    //
+    //     let mut rx = UpliftDeskId::scan(&adapter).await;
+    //
+    //     let mut i = 10;
+    //     while let Some(result) = rx.recv().await {
+    //         println!("{result:?}");
+    //         i -= 1;
+    //
+    //         if i <= 0 {
+    //             break;
+    //         }
+    //     }
+    // }
 }

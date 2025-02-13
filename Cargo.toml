@@ -3,5 +3,6 @@
 resolver = "2"
 
 members = [
+    "crates/uplift_cli",
     "crates/uplift_lib"
 ]
