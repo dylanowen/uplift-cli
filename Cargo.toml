@@ -3,6 +3,24 @@
 resolver = "2"
 
 members = [
-    "crates/uplift_cli",
-    "crates/uplift_lib"
+    "crates/*"
 ]
+
+[workspace.dependencies]
+
+# Bluetooth support
+btleplug = "0.12"
+uuid = "1.8"
+
+# Async
+tokio = "1.49"
+tokio-stream = "0.1"
+futures = "0.3.30"
+
+# Units
+uom = "0.38"
+
+serde = "1.0"
+
+log = "0.4"
+env_logger = "0.11"

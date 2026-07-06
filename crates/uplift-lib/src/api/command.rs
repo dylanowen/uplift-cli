@@ -12,10 +12,14 @@ pub enum Command {
     Up,
     Down,
     Stop,
+    SaveSit,
+    SaveStand,
     SaveMemory1,
     SaveMemory2,
     SaveMemory3,
     SaveMemory4,
+    GotoSit,
+    GotoStand,
     GotoMemory1,
     GotoMemory2,
     GotoMemory3,
@@ -58,7 +62,7 @@ pub const GOTO_MEMORY_4: [u8; 6] = simple_desk_command(0x28);
 pub const STOP: [u8; 6] = simple_desk_command(0x2b);
 
 /// Unknown what this does
-pub const PATCH: [u8; 6] = simple_desk_command(0x2b);
+pub const PATCH: [u8; 6] = simple_desk_command(0xa0);
 
 pub const FETCH_STAND_TIME: [u8; 6] = simple_desk_command(0xa2);
 pub const FETCH_ALL_TIME: [u8; 6] = simple_desk_command(0xaa);
@@ -75,12 +79,12 @@ impl Command {
             Command::Up => Cow::from(&UP),
             Command::Down => Cow::from(&DOWN),
             Command::Stop => Cow::from(&STOP),
-            Command::SaveMemory1 => Cow::from(&SAVE_MEMORY_1),
-            Command::SaveMemory2 => Cow::from(&SAVE_MEMORY_2),
+            Command::SaveSit | Command::SaveMemory1 => Cow::from(&SAVE_MEMORY_1),
+            Command::SaveStand | Command::SaveMemory2 => Cow::from(&SAVE_MEMORY_2),
             Command::SaveMemory3 => Cow::from(&SAVE_MEMORY_3),
             Command::SaveMemory4 => Cow::from(&SAVE_MEMORY_4),
-            Command::GotoMemory1 => Cow::from(&GOTO_MEMORY_1),
-            Command::GotoMemory2 => Cow::from(&GOTO_MEMORY_2),
+            Command::GotoSit | Command::GotoMemory1 => Cow::from(&GOTO_MEMORY_1),
+            Command::GotoStand | Command::GotoMemory2 => Cow::from(&GOTO_MEMORY_2),
             Command::GotoMemory3 => Cow::from(&GOTO_MEMORY_3),
             Command::GotoMemory4 => Cow::from(&GOTO_MEMORY_4),
             Command::FetchHeightValue => Cow::from(&FETCH_HEIGHT_VALUE),

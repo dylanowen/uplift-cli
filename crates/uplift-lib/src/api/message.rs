@@ -2,8 +2,8 @@ use crate::api::{deserialize_height, PAYLOAD_END};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take};
 use nom::multi::many0;
+use nom::IResult;
 use nom::Parser;
-use nom::{IResult, Needed};
 use std::fmt::{Debug, Formatter};
 
 type NomResult<'a, O> = Result<O, nom::Err<nom::error::Error<&'a [u8]>>>;
@@ -12,10 +12,15 @@ const MESSAGE_PREFIX: [u8; 2] = [0xf2, 0xf2];
 
 const HEIGHT_CODE: u8 = 0x01;
 const PHYSICAL_LIMITS_CODE: u8 = 0x07;
+#[allow(dead_code)]
 const ID_CODE: u8 = 0x0f; // not sure what this does but it seems to be related to iD in Calibration?
 const HEIGHT_UNIT_CODE: u8 = 0x0e;
+#[allow(dead_code)]
 const IA_CODE: u8 = 0x10; // Probably stores a height, maybe some minimum?
+const LIMITED_STATUS_CODE: u8 = 0x20;
+#[allow(dead_code)]
 const HEIGHT_MAX_CODE: u8 = 0x21;
+#[allow(dead_code)]
 const HEIGHT_MIN_CODE: u8 = 0x22;
 
 #[derive(Eq, PartialEq, Clone)]
@@ -23,6 +28,7 @@ pub enum Message {
     Height(u16),
     PhysicalLimits { min: u16, max: u16 },
     HeightUnit(HeightUnit),
+    LimitedStatus, // TODO this has more data but it's unused
     Unknown { code: u8, data: Vec<u8> },
 }
 
@@ -60,6 +66,7 @@ fn parse_message_data(initial_i: &[u8]) -> IResult<&[u8], Message> {
         HEIGHT_CODE => parse_height_message(data)?,
         HEIGHT_UNIT_CODE => parse_height_unit_message(data)?,
         PHYSICAL_LIMITS_CODE => parse_physical_limits_message(data)?,
+        LIMITED_STATUS_CODE => parse_limited_status_message(data)?,
         _ => Message::Unknown {
             code: cmd,
             data: data.into(),
@@ -69,7 +76,7 @@ fn parse_message_data(initial_i: &[u8]) -> IResult<&[u8], Message> {
     Ok((i, message))
 }
 
-fn parse_height_message(data: &[u8]) -> NomResult<Message> {
+fn parse_height_message(data: &[u8]) -> NomResult<'_, Message> {
     // TODO what does the bonus byte mean? It always seems to be 0x03
     let (_, data) = take(2usize)(data)?;
 
@@ -78,7 +85,7 @@ fn parse_height_message(data: &[u8]) -> NomResult<Message> {
     Ok(Message::Height(height))
 }
 
-fn parse_height_unit_message(data: &[u8]) -> NomResult<Message> {
+fn parse_height_unit_message(data: &[u8]) -> NomResult<'_, Message> {
     let (_, height_unit) = alt((
         tag([0x00].as_ref()).map(|_| HeightUnit::Cm),
         tag([0x01].as_ref()).map(|_| HeightUnit::Inch),
@@ -88,13 +95,19 @@ fn parse_height_unit_message(data: &[u8]) -> NomResult<Message> {
     Ok(Message::HeightUnit(height_unit))
 }
 
-fn parse_physical_limits_message(data: &[u8]) -> NomResult<Message> {
+fn parse_physical_limits_message(data: &[u8]) -> NomResult<'_, Message> {
     let (data, max) = take(2usize)(data)?;
-    let max = deserialize_height(&max);
+    let max = deserialize_height(max);
     let (_, min) = take(2usize)(data)?;
-    let min = deserialize_height(&min);
+    let min = deserialize_height(min);
 
     Ok(Message::PhysicalLimits { min, max })
+}
+
+fn parse_limited_status_message(data: &[u8]) -> NomResult<'_, Message> {
+    let (_, _status) = take(1usize)(data)?;
+
+    Ok(Message::LimitedStatus)
 }
 
 impl Debug for Message {
@@ -115,6 +128,10 @@ impl Debug for Message {
                 .debug_tuple("HeightUnit")
                 .field(&format_hex(HEIGHT_UNIT_CODE))
                 .field(unit)
+                .finish(),
+            Message::LimitedStatus => f
+                .debug_tuple("LimitedStatus")
+                .field(&format_hex(LIMITED_STATUS_CODE))
                 .finish(),
             Message::Unknown { code, data } => f
                 .debug_struct("Unknown")

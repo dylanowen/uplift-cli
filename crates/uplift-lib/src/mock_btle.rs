@@ -13,9 +13,10 @@ use btleplug::Result;
 use futures::stream::Stream;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 
+#[cfg(test)]
 mock! {
     pub Central {}
 
@@ -35,6 +36,8 @@ mock! {
 
         async fn add_peripheral(&self, address: &PeripheralId) -> Result<MockPeripheral>;
 
+        async fn clear_peripherals(&self) -> Result<()>;
+
         async fn adapter_info(&self) -> Result<String>;
 
         async fn adapter_state(&self) -> Result<CentralState>;
@@ -45,6 +48,7 @@ mock! {
     }
 }
 
+#[cfg(test)]
 mock! {
     pub Peripheral {}
 
@@ -53,6 +57,8 @@ mock! {
         fn id(&self) -> PeripheralId;
 
         fn address(&self) -> BDAddr;
+
+         fn mtu(&self) -> u16;
 
         async fn properties(&self) -> Result<Option<PeripheralProperties>>;
 
