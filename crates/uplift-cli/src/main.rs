@@ -4,6 +4,7 @@ use btleplug::platform::{Adapter, Manager};
 use clap::Parser;
 use futures::StreamExt;
 use log::trace;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 use uplift_cli::{Args, Commands, Config, format_height, load_conf, save_conf};
@@ -12,7 +13,6 @@ use uplift_lib::{Command, UpliftDeskScanner};
 use uom::si::f32::Length;
 use uom::si::length::inch;
 use uplift_lib::{UpliftDesk, UpliftDeskId};
-use uuid::Uuid;
 
 const FORCE_ATTEMPTS: usize = 20;
 const SCAN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -23,7 +23,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
     setup_logging(&args)?;
 
-    let conf = load_conf()?;
+    let conf = load_conf();
 
     let timeout_duration = Duration::from_secs(args.timeout);
 
@@ -48,13 +48,13 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
         .next()
         .ok_or_else(|| anyhow!("No adapters found"))?;
 
-    let mut desk = choose_desk(adapter.clone(), args.desk.as_deref()).await?;
+    let mut desk = choose_desk(&conf, adapter.clone(), args.desk).await?;
 
     desk.connect().await?;
 
     match args.command {
         Commands::Sit { save } => {
-            if save.is_some() {
+            if save {
                 desk.command(Command::SaveSit).await?;
 
                 // let the packet actually send
@@ -73,7 +73,7 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
             }
         }
         Commands::Stand { save } => {
-            if save.is_some() {
+            if save {
                 desk.command(Command::SaveStand).await?;
 
                 // let the packet actually send
@@ -100,12 +100,12 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
         Commands::Query => {
             let height = desk.height().await?;
             let rssi = desk.rssi().await?;
-            println!("height: {} rssi: {rssi:?}", format_height(height),);
+            println!("height: {}\nrssi: {rssi:?}", format_height(height),);
         }
         Commands::Toggle => {
             let height = desk.height().await?;
 
-            let mid = conf.stand_height + conf.sit_height / 2.;
+            let mid = (conf.stand_height + conf.sit_height) / 2.;
 
             if height > mid {
                 desk.command(Command::GotoSit).await?;
@@ -119,7 +119,7 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
         Commands::ForceToggle => {
             let height = desk.height().await?;
 
-            let mid = conf.stand_height + conf.sit_height / 2.;
+            let mid = (conf.stand_height + conf.sit_height) / 2.;
 
             if height > mid {
                 force(Command::GotoSit, conf.sit_height, &mut desk).await?;
@@ -136,6 +136,14 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
                     return Err(anyhow!("Height stream disconnected"));
                 }
             }
+        }
+        Commands::AddKnownDesk { desk } => {
+            conf.known_desks.insert(desk);
+            save_conf(&conf)?;
+        }
+        Commands::RemoveKnownDesk { desk } => {
+            conf.known_desks.remove(&desk);
+            save_conf(&conf)?;
         }
     }
 
@@ -165,8 +173,6 @@ async fn force(command: Command, goal: Length, desk: &mut UpliftDesk) -> Result<
                     format_height(next_height)
                 );
 
-                println!("{}", previous_height == next_height);
-
                 if previous_height == next_height {
                     // we've stopped moving so check our height
                     if (goal - next_height).abs() <= height_tolerance {
@@ -183,48 +189,78 @@ async fn force(command: Command, goal: Length, desk: &mut UpliftDesk) -> Result<
         }
     }
 
-    desk.command(Command::GotoSit).await?;
-
     Err(anyhow!(
         "Failed to force the desk to the intended height after {attempts} attempts"
     ))
 }
 
 async fn choose_desk(
+    conf: &Config,
     adapter: Adapter,
-    desk_uuid: Option<&str>,
+    desk_uuid: Option<UpliftDeskId>,
 ) -> Result<UpliftDesk, anyhow::Error> {
     let mut scanner = UpliftDeskScanner::new(adapter).await?;
     let deadline = Instant::now() + SCAN_TIMEOUT;
 
-    if let Some(desk) = desk_uuid {
-        let desk_id =
-            UpliftDeskId::from(Uuid::parse_str(desk).with_context(|| "Invalid UUID for desk")?);
-
+    if let Some(desk_uuid) = desk_uuid {
         loop {
             match timeout_at(deadline, scanner.next()).await {
-                Ok(Some(desk)) if desk_id == desk.id() => {
+                Ok(Some(desk)) if desk_uuid == desk.id() => {
                     return Ok(desk);
                 }
                 Ok(Some(_)) => continue,
                 _ => {
-                    return Err(anyhow!("Timed out waiting for desk: {desk_id:?}"));
+                    return Err(anyhow!("Timed out waiting for desk: {desk_uuid:?}"));
                 }
             }
         }
     } else {
-        let mut desks = Vec::new();
+        // this "works" and is WAAAY faster but could just select the wrong desk
+        // scanner.next().await.ok_or_else(|| anyhow!("No desk found"))
+
+        let mut desks = HashMap::new();
         while let Ok(Some(desk)) = timeout_at(deadline, scanner.next()).await {
-            desks.push(desk)
+            desks.insert(desk.id(), desk);
         }
-        desks.dedup_by_key(|d| d.id());
+
+        // if we're choosing across multiple desks prioritize known desks (if there are any)
+        if desks.len() > 1 && desks.keys().any(|id| conf.known_desks.contains(id)) {
+            desks.retain(|id, _| conf.known_desks.contains(id))
+        }
 
         if desks.len() > 1 {
-            println!("{:?}", desks.iter().map(|d| d.id()).collect::<Vec<_>>());
-            Ok(desks.into_iter().next().unwrap())
+            async fn get_rssi(desk: &mut UpliftDesk) -> i16 {
+                async fn inner(desk: &mut UpliftDesk) -> btleplug::Result<i16> {
+                    desk.connect().await?;
+                    desk.rssi().await?.ok_or(btleplug::Error::NotConnected)
+                }
+                let result = inner(desk).await.unwrap_or(i16::MIN);
+                let _ = desk.disconnect().await;
+                result
+            }
+
+            let mut iter = desks.into_values();
+            let mut desk = iter.next().unwrap();
+            let mut rssi = get_rssi(&mut desk).await;
+            trace!("{:?} @ rssi: {rssi}", desk.id());
+            for mut next_desk in iter {
+                let next_rssi = get_rssi(&mut next_desk).await;
+                trace!("{:?} @ rssi: {next_rssi}", next_desk.id());
+                if next_rssi > rssi {
+                    rssi = next_rssi;
+                    desk = next_desk;
+                }
+            }
+
+            trace!("Chosen desk: {:?}", desk.id());
+
+            // let everything cool down after all the connecting
+            sleep(Duration::from_secs(1)).await;
+
+            Ok(desk)
         } else {
             desks
-                .into_iter()
+                .into_values()
                 .next()
                 .ok_or_else(|| anyhow!("No desk found"))
         }

@@ -1,13 +1,15 @@
 use clap::{Parser, Subcommand};
-use log::debug;
+use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::any::type_name;
+use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
 use uom::fmt::DisplayStyle;
 use uom::si::SI;
 use uom::si::f32::Length;
 use uom::si::fmt::QuantityArguments;
 use uom::si::length::{Dimension, inch, pica_computer};
+use uplift_lib::UpliftDeskId;
 
 const CONF_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -21,8 +23,8 @@ pub struct Args {
     #[clap(long, default_value_t = 60)]
     pub timeout: u64,
     /// Choose the desk to interact with
-    #[clap(long)]
-    pub desk: Option<String>,
+    #[clap(long, value_parser=UpliftDeskId::parse)]
+    pub desk: Option<UpliftDeskId>,
     /// Set the environment log level
     #[clap(long, env = env_logger::DEFAULT_FILTER_ENV, default_value_t = String::from("info"))]
     pub log_level: String,
@@ -35,15 +37,15 @@ pub struct Args {
 pub enum Commands {
     /// Get the estimated desk height in inches
     Query,
-    /// Sit or use `save` to store the current height
+    /// Sit or use `--save` to store the current height
     Sit {
-        #[clap(subcommand)]
-        save: Option<SaveCommand>,
+        #[clap(long)]
+        save: bool,
     },
-    /// Stand or use `save` to store the current height
+    /// Stand or use `--save` to store the current height
     Stand {
-        #[clap(subcommand)]
-        save: Option<SaveCommand>,
+        #[clap(long)]
+        save: bool,
     },
     /// Sit -> Stand or Stand -> Sit
     Toggle,
@@ -55,15 +57,21 @@ pub enum Commands {
     ForceToggle,
     /// Listen for height changes
     Listen,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum SaveCommand {
-    Save,
+    /// Add a known desk to prioritize when connecting
+    AddKnownDesk {
+        #[clap(value_parser=UpliftDeskId::parse)]
+        desk: UpliftDeskId,
+    },
+    /// Remove a known desk
+    RemoveKnownDesk {
+        #[clap(value_parser=UpliftDeskId::parse)]
+        desk: UpliftDeskId,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
+    pub known_desks: HashSet<UpliftDeskId>,
     pub sit_height: Length,
     pub stand_height: Length,
 }
@@ -71,6 +79,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            known_desks: HashSet::new(),
             sit_height: Length::new::<inch>(26.),
             stand_height: Length::new::<inch>(42.),
         }
@@ -80,21 +89,25 @@ impl Default for Config {
 impl Debug for Config {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(type_name::<Self>())
+            .field("known_desks", &self.known_desks)
             .field("sit_height", &format_height(self.sit_height))
             .field("stand_height", &format_height(self.stand_height))
             .finish()
     }
 }
 
-pub fn load_conf() -> Result<Config, anyhow::Error> {
-    let conf = confy::load(CONF_NAME, None)?;
+pub fn load_conf() -> Config {
+    let config_path = confy::get_configuration_file_path(CONF_NAME, None).unwrap();
+    debug!("loading uplift config @ {config_path:?}",);
 
-    debug!(
-        "Loaded config @ {:?}: {conf:#?}",
-        confy::get_configuration_file_path(CONF_NAME, None)?
-    );
+    let conf = confy::load(CONF_NAME, None).unwrap_or_else(|e| {
+        error!("Failed to load config: {}", e);
+        Default::default()
+    });
 
-    Ok(conf)
+    debug!("Loaded config @ {config_path:?}: {conf:#?}",);
+
+    conf
 }
 
 pub fn save_conf(conf: &Config) -> Result<(), anyhow::Error> {

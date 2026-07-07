@@ -1,9 +1,9 @@
-use crate::api::{deserialize_height, PAYLOAD_END};
+use crate::api::{PAYLOAD_END, deserialize_height};
+use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take};
 use nom::multi::many0;
-use nom::IResult;
-use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
 type NomResult<'a, O> = Result<O, nom::Err<nom::error::Error<&'a [u8]>>>;

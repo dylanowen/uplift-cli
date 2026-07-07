@@ -1,7 +1,8 @@
-use crate::{UpliftDesk, DESK_UUIDS};
+use crate::{DESK_UUIDS, UpliftDesk};
 use btleplug::api::CentralEvent::{DeviceConnected, DeviceDiscovered, DeviceUpdated};
-use btleplug::api::{Central, CentralEvent, ScanFilter};
-use futures::{ready, Stream};
+use btleplug::api::{Central, CentralEvent, Peripheral, ScanFilter};
+use futures::{Stream, ready};
+use log::debug;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -72,6 +73,9 @@ where
                 // We have a peripheral in progress, poll that until it's done
                 let peripheral = ready!(p.as_mut().poll(cx));
                 self.pending = None;
+
+                debug!("Discovered peripheral {:?}", peripheral.id());
+
                 break Some(UpliftDesk::new(peripheral));
             } else {
                 match ready!(self.events.as_mut().poll_next(cx)) {

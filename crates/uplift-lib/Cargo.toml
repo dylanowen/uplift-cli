@@ -6,7 +6,7 @@ description = "Rust library for controlling Uplift standing desks via Bluetooth"
 license = "MPL-2.0"
 homepage = "https://github.com/dylanowen/uplift-cli"
 repository = "https://github.com/dylanowen/uplift-cli"
-edition = "2021"
+edition = "2024"
 
 [lib]
 

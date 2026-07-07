@@ -1,6 +1,7 @@
 use btleplug::platform::PeripheralId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use uuid::Uuid;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -13,6 +14,10 @@ impl UpliftDeskId {
         I: Into<PeripheralId>,
     {
         Self(id.into())
+    }
+
+    pub fn parse(id: &str) -> Result<UpliftDeskId, uuid::Error> {
+        Ok(UpliftDeskId::from(Uuid::parse_str(id)?))
     }
 }
 

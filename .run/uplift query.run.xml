@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="uplift query" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
     <option name="buildProfileId" value="dev" />
-    <option name="command" value="run --package uplift-cli --bin uplift-cli -- query" />
+    <option name="command" value="run --package uplift-cli --bin uplift -- query" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
       <env name="RUST_LOG" value="uplift=trace,uplift_cli=trace" />

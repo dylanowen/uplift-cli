@@ -1,7 +1,7 @@
 use crate::api::{serialize_height, serialize_payload};
+use btleplug::Result;
 use btleplug::api;
 use btleplug::api::{Characteristic, WriteType};
-use btleplug::Result;
 use std::borrow::Cow;
 
 /// https://gitlab.com/pimp-my-desk/desk-control/jiecang-reverse-engineering#protocol

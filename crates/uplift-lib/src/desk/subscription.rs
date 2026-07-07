@@ -1,7 +1,7 @@
 use crate::api::{Command, EnhancedPeripheral as _, HeightUnit, Message};
+use btleplug::Error;
 use btleplug::api::{Characteristic, Peripheral, ValueNotification, WriteType};
 use btleplug::platform::PeripheralId;
-use btleplug::Error;
 use std::future::Future;
 use std::ops::Deref;
 use std::time::Duration;
@@ -38,16 +38,13 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         data_out_characteristic: Characteristic,
         peripheral: P,
         cancel_rx: oneshot::Receiver<()>,
-    ) -> Self {
+    ) -> btleplug::Result<Self> {
         let (height_tx, height_rx) = watch::channel(None);
         // The app seems to default to inches
         let (height_unit_tx, height_unit_rx) = watch::channel(HeightUnit::Inch);
 
-        let receiver = peripheral.notifications().await.unwrap();
-        peripheral
-            .subscribe(&data_out_characteristic)
-            .await
-            .unwrap();
+        let receiver = peripheral.notifications().await?;
+        peripheral.subscribe(&data_out_characteristic).await?;
 
         // spawn the initial commands
         tokio::spawn({
@@ -94,13 +91,13 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
             }
         });
 
-        Self {
+        Ok(Self {
             height_rx,
             height_unit_rx,
             data_in_characteristic,
             peripheral,
             subscription_live,
-        }
+        })
     }
 
     pub(super) fn get_height(&self) -> impl Future<Output = btleplug::Result<Length>> + 'static {
@@ -240,7 +237,7 @@ where
 {
     let maybe_result = rx.borrow_and_update().deref().clone();
     match maybe_result {
-        Some(result) => Ok(result.clone()),
+        Some(result) => Ok(result),
         None => {
             on_none().await?;
 

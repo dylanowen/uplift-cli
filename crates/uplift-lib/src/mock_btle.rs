@@ -6,10 +6,10 @@ use btleplug::platform::PeripheralId;
 use mockall::mock;
 
 use async_trait::async_trait;
+use btleplug::Result;
 use btleplug::api::CentralEvent;
 use btleplug::api::CentralState;
 use btleplug::api::ScanFilter;
-use btleplug::Result;
 use futures::stream::Stream;
 use std::collections::BTreeSet;
 use std::fmt;

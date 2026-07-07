@@ -2,9 +2,9 @@ mod subscription;
 
 use crate::api::{Command, EnhancedPeripheral as _, HeightUnit};
 use crate::desk::subscription::DeskSubscription;
-use crate::{DeskUuids, UpliftDeskId, DESK_UUIDS};
+use crate::{DESK_UUIDS, DeskUuids, UpliftDeskId};
 use btleplug::api::{Characteristic, Peripheral, WriteType};
-use btleplug::{platform, Error, Result};
+use btleplug::{Error, Result, platform};
 use either::Either;
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
@@ -177,7 +177,7 @@ impl<P: Peripheral> UpliftDesk<P> {
                             peripheral.clone(),
                             cancel_rx,
                         )
-                        .await,
+                        .await?,
                     )
                 }
 
