@@ -270,7 +270,7 @@ async fn choose_desk(
 fn setup_logging(args: &Args) -> Result<(), anyhow::Error> {
     let mut builder = env_logger::Builder::new();
     builder.parse_filters(&args.log_level);
-    builder.filter_module("uplift_lib", log::LevelFilter::Trace);
+    // builder.filter_module("uplift_lib", log::LevelFilter::Trace);
 
     if let Some(s) = &args.log_style {
         builder.parse_write_style(s);
