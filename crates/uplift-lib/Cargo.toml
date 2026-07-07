@@ -11,7 +11,7 @@ edition = "2024"
 [lib]
 
 [features]
-serde = ["dep:serde", "btleplug/serde", "dep:rmp-serde"]
+serde = ["dep:serde", "btleplug/serde", "dep:rmp-serde", "dep:serde_json"]
 sqlx = ["dep:sqlx", "dep:rmp-serde", "serde"]
 
 [dependencies]
@@ -35,6 +35,7 @@ serde = { workspace = true, features = ["derive"], optional = true }
 
 sqlx = { version = "0.9", optional = true }
 rmp-serde = { version = "1.3", optional = true }
+serde_json = { version = "1", optional = true }
 
 either = "1.13"
 

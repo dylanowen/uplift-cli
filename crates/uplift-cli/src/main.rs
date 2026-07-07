@@ -100,7 +100,11 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
         Commands::Query => {
             let height = desk.height().await?;
             let rssi = desk.rssi().await?;
-            println!("height: {}\nrssi: {rssi:?}", format_height(height),);
+            println!(
+                "desk: {:?}\nheight: {}\nrssi: {rssi:?}",
+                desk.id(),
+                format_height(height),
+            );
         }
         Commands::Toggle => {
             let height = desk.height().await?;

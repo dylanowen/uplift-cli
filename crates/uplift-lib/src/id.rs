@@ -1,8 +1,7 @@
 use btleplug::platform::PeripheralId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use uuid::Uuid;
+use std::fmt::{Debug, Display, Formatter};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Eq, Hash, Ord, PartialEq, PartialOrd, Clone, Debug)]
@@ -16,20 +15,27 @@ impl UpliftDeskId {
         Self(id.into())
     }
 
-    pub fn parse(id: &str) -> Result<UpliftDeskId, uuid::Error> {
-        Ok(UpliftDeskId::from(Uuid::parse_str(id)?))
-    }
-}
-
-impl From<Uuid> for UpliftDeskId {
-    fn from(value: Uuid) -> Self {
-        UpliftDeskId(value.into())
+    #[cfg(feature = "serde")]
+    pub fn parse(id: &str) -> Result<UpliftDeskId, serde_json::Error> {
+        serde_json::from_value::<PeripheralId>(serde_json::Value::String(id.to_string()))
+            .map(UpliftDeskId)
     }
 }
 
 impl From<UpliftDeskId> for PeripheralId {
     fn from(val: UpliftDeskId) -> Self {
         val.0
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Display for UpliftDeskId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Ok(serde_json::Value::String(s)) = serde_json::to_value(&self.0) {
+            write!(f, "{s}")
+        } else {
+            Err(std::fmt::Error)
+        }
     }
 }
 
@@ -98,26 +104,22 @@ mod sqlx_feature {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos", feature = "serde"))]
 mod tests {
+    use super::*;
 
-    // #[tokio::test]
-    // async fn test() {
-    //     let manager = Manager::new().await.unwrap();
-    //
-    //     let adapters = manager.adapters().await.unwrap();
-    //     let adapter = adapters.into_iter().next().unwrap();
-    //
-    //     let mut rx = UpliftDeskId::scan(&adapter).await;
-    //
-    //     let mut i = 10;
-    //     while let Some(result) = rx.recv().await {
-    //         println!("{result:?}");
-    //         i -= 1;
-    //
-    //         if i <= 0 {
-    //             break;
-    //         }
-    //     }
-    // }
+    const TEST_UUID: &str = "12345678-1234-1234-1234-123456789012";
+
+    #[test]
+    fn test_parse_raw_uuid() {
+        let id = UpliftDeskId::parse(TEST_UUID).unwrap();
+        assert_eq!(id.to_string(), TEST_UUID);
+    }
+
+    #[test]
+    fn test_parse_round_trip() {
+        let id = UpliftDeskId::parse(TEST_UUID).unwrap();
+        let id2 = UpliftDeskId::parse(&id.to_string()).unwrap();
+        assert_eq!(id, id2);
+    }
 }
