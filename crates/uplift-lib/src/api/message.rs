@@ -85,7 +85,7 @@ fn parse_message_data(initial_i: &[u8]) -> IResult<&[u8], Message> {
 }
 
 fn parse_height_message(data: &[u8]) -> NomResult<'_, Message> {
-    // TODO what does the bonus byte mean? It always seems to be 0x03
+    // TODO what does the bonus byte mean?
     let (_, data) = take(2usize)(data)?;
 
     let height = deserialize_height(data);

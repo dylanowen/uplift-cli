@@ -59,12 +59,12 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
             let limit_status = desk.limited_status().await?;
             let rssi = desk.rssi().await?;
             println!(
-                "desk: {:?}\n\
-                height: {}\n\
-                physical min limit: {:?}\n\
-                physical max limit: {:?}\n\
-                limited status: {limit_status:?}\n\
-                rssi: {rssi:?}",
+                "desk: {}\n\
+                 height: {}\n\
+                 physical min limit: {:?}\n\
+                 physical max limit: {:?}\n\
+                 limited status: {limit_status:?}\n\
+                 rssi: {rssi:?}",
                 desk.id(),
                 format_height(height),
                 limits.map(|l| format_height(l.0)),
