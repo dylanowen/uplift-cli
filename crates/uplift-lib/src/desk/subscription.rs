@@ -1,3 +1,4 @@
+use crate::LimitedDirection;
 use crate::api::{Command, EnhancedPeripheral as _, HeightUnit, Message};
 use btleplug::Error;
 use btleplug::api::{Characteristic, Peripheral, ValueNotification, WriteType};
@@ -16,7 +17,9 @@ use uom::si::length::{centimeter, inch};
 
 pub struct DeskSubscription<P: Peripheral> {
     height_rx: watch::Receiver<Option<u16>>,
+    physical_limits_rx: watch::Receiver<Option<(u16, u16)>>,
     height_unit_rx: watch::Receiver<HeightUnit>,
+    limited_status_rx: watch::Receiver<LimitedDirection>,
     data_in_characteristic: Characteristic,
     peripheral: P,
     subscription_live: JoinHandle<btleplug::Result<()>>,
@@ -28,9 +31,9 @@ pub struct DeskSubscription<P: Peripheral> {
 /// t:500  [Command::FetchHighLowLimit]
 /// t:600  [Command::FetchHeightValue]
 /// t:700  [Command::FetchHeightRange]
-/// t:?    F1F11F0100207E Advanced Command: 0x1F/31 data: 00
-/// t:?    F1F1FE00FE7E Simple command: 0xFE/-2
-/// t:1100 F1F1FE00FE7E
+/// t:?    [Command::LockInfo]
+/// t:?    [Command::HandOperate]
+/// t:1100 [Command::HandOperate]
 impl<P: Peripheral + 'static> DeskSubscription<P> {
     pub(super) async fn new(
         id: PeripheralId,
@@ -40,8 +43,10 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         cancel_rx: oneshot::Receiver<()>,
     ) -> btleplug::Result<Self> {
         let (height_tx, height_rx) = watch::channel(None);
+        let (physical_limits_tx, physical_limits_rx) = watch::channel(None);
         // The app seems to default to inches
         let (height_unit_tx, height_unit_rx) = watch::channel(HeightUnit::Inch);
+        let (limited_status_tx, limited_status_rx) = watch::channel(LimitedDirection::None);
 
         let receiver = peripheral.notifications().await?;
         peripheral.subscribe(&data_out_characteristic).await?;
@@ -56,6 +61,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
                 for cmd in [
                     Command::FetchHighLowLimit,
                     Command::FetchHighLowLimit,
+                    Command::FetchHeightRange,
                     Command::FetchHeightValue,
                 ] {
                     interval.tick().await;
@@ -76,7 +82,9 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
                 let result = subscription_main_loop(
                     receiver,
                     height_tx,
+                    physical_limits_tx,
                     height_unit_tx,
+                    limited_status_tx,
                     cancel_rx,
                     data_out_characteristic,
                     peripheral,
@@ -93,7 +101,9 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
 
         Ok(Self {
             height_rx,
+            physical_limits_rx,
             height_unit_rx,
+            limited_status_rx,
             data_in_characteristic,
             peripheral,
             subscription_live,
@@ -111,9 +121,22 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         }
     }
 
+    pub(super) fn get_physical_limits(&self) -> Option<(Length, Length)> {
+        let (min, max) = (*self.physical_limits_rx.borrow())?;
+        Some((
+            // For some reason these units don't match the reported unit?
+            desk_height_to_length(min, HeightUnit::Cm),
+            desk_height_to_length(max, HeightUnit::Cm),
+        ))
+    }
+
     pub(super) fn get_height_unit(&self) -> HeightUnit {
         // I don't know how to ask the desk for this info
         *self.height_unit_rx.borrow()
+    }
+
+    pub(super) fn get_limited_status(&self) -> LimitedDirection {
+        *self.limited_status_rx.borrow()
     }
 
     pub(super) async fn height_stream(
@@ -147,10 +170,13 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn subscription_main_loop<R, P>(
     mut receiver: R,
     height_tx: watch::Sender<Option<u16>>,
+    physical_limits_tx: watch::Sender<Option<(u16, u16)>>,
     height_unit_tx: watch::Sender<HeightUnit>,
+    limited_status_tx: watch::Sender<LimitedDirection>,
     mut cancel_rx: oneshot::Receiver<()>,
     data_out_characteristic: Characteristic,
     peripheral: P,
@@ -178,11 +204,15 @@ where
                                         Message::Height(height) => {
                                             height_tx.send(Some(height)).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
                                         }
-                                        Message::PhysicalLimits{ .. } => {}
-                                        Message::HeightUnit(height_unit) => {
-                                            height_unit_tx.send(height_unit).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
+                                        Message::PhysicalLimits{ min, max } => {
+                                            physical_limits_tx.send(Some((min, max))).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
                                         }
-                                        Message::LimitedStatus => {}
+                                        Message::HeightUnit { unit } => {
+                                            height_unit_tx.send(unit).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
+                                        }
+                                        Message::LimitedStatus { status } => {
+                                            limited_status_tx.send(status).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
+                                        }
                                         Message::Unknown{ .. } => {}
                                     }
                                 }

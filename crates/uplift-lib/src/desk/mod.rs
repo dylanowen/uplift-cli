@@ -2,7 +2,7 @@ mod subscription;
 
 use crate::api::{Command, EnhancedPeripheral as _, HeightUnit};
 use crate::desk::subscription::DeskSubscription;
-use crate::{DESK_UUIDS, DeskUuids, UpliftDeskId};
+use crate::{DESK_UUIDS, DeskUuids, LimitedDirection, UpliftDeskId};
 use btleplug::api::{Characteristic, Peripheral, WriteType};
 use btleplug::{Error, Result, platform};
 use either::Either;
@@ -124,8 +124,16 @@ impl<P: Peripheral> UpliftDesk<P> {
         self.get_subscription().await?.get_height().await
     }
 
+    pub async fn physical_limits(&mut self) -> Result<Option<(Length, Length)>> {
+        Ok(self.get_subscription().await?.get_physical_limits())
+    }
+
     pub async fn height_unit(&mut self) -> Result<HeightUnit> {
         Ok(self.get_subscription().await?.get_height_unit())
+    }
+
+    pub async fn limited_status(&mut self) -> Result<LimitedDirection> {
+        Ok(self.get_subscription().await?.get_limited_status())
     }
 
     pub async fn height_stream(&mut self) -> Result<impl Stream<Item = Length> + use<P>> {

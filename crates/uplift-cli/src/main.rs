@@ -53,6 +53,24 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
     desk.connect().await?;
 
     match args.command {
+        Commands::Query => {
+            let height = desk.height().await?;
+            let limits = desk.physical_limits().await?;
+            let limit_status = desk.limited_status().await?;
+            let rssi = desk.rssi().await?;
+            println!(
+                "desk: {:?}\n\
+                height: {}\n\
+                physical min limit: {:?}\n\
+                physical max limit: {:?}\n\
+                limited status: {limit_status:?}\n\
+                rssi: {rssi:?}",
+                desk.id(),
+                format_height(height),
+                limits.map(|l| format_height(l.0)),
+                limits.map(|l| format_height(l.1)),
+            );
+        }
         Commands::Sit { save } => {
             if save {
                 desk.command(Command::SaveSit).await?;
@@ -97,15 +115,6 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
         Commands::ForceStand => {
             force(Command::GotoStand, conf.stand_height, &mut desk).await?;
         }
-        Commands::Query => {
-            let height = desk.height().await?;
-            let rssi = desk.rssi().await?;
-            println!(
-                "desk: {:?}\nheight: {}\nrssi: {rssi:?}",
-                desk.id(),
-                format_height(height),
-            );
-        }
         Commands::Toggle => {
             let height = desk.height().await?;
 
@@ -130,6 +139,18 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
             } else {
                 force(Command::GotoStand, conf.stand_height, &mut desk).await?;
             }
+        }
+        Commands::SetUpperLimit => {
+            desk.command(Command::SaveUpLimit).await?;
+
+            // let the packet actually send
+            sleep(PACKET_DELAY).await;
+        }
+        Commands::SetLowerLimit => {
+            desk.command(Command::SaveDownLimit).await?;
+
+            // let the packet actually send
+            sleep(PACKET_DELAY).await;
         }
         Commands::Listen => {
             let mut heights = desk.height_stream().await?;

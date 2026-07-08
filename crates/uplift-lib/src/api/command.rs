@@ -26,13 +26,26 @@ pub enum Command {
     GotoMemory4,
     FetchHeightValue,
     FetchHeightRange,
-    FetchHighLowLimit,
     GotoHeight { height_mm: u16 },
-    SetMemoryHeight { memory_location: u8, height_mm: u16 },
+    LockInfo,
+    SetMemoryClickMode { during_move: bool },
+    FetchHighLowLimit,
+    SaveUpLimit,
+    SaveDownLimit,
+    ClearLimit { direction: Direction },
     Patch,
     FetchStandTime,
     FetchAllTime,
+    SetMemoryHeight { memory_location: u8, height_mm: u16 },
+    HandOperate,
     Unknown { cmd: u8, data: &'static [u8] },
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Direction {
+    All,
+    Up,
+    Down,
 }
 
 pub const UP: [u8; 6] = simple_desk_command(0x01);
@@ -52,7 +65,31 @@ pub fn goto_height(height_mm: u16) -> Vec<u8> {
     advanced_desk_command(0x1b, &serialize_height(height_mm))
 }
 
+// Unknown what this does
+pub fn lock_info() -> Vec<u8> {
+    // I'm not sure what the data denotes here
+    advanced_desk_command(0x1f, &[0x0])
+}
+
+pub fn set_memory_click_mode(mode: u8) -> Vec<u8> {
+    advanced_desk_command(0x19, &[mode])
+}
+
 pub const FETCH_HIGH_LOW_LIMIT: [u8; 6] = simple_desk_command(0x20);
+
+pub const SAVE_UP_LIMIT: [u8; 6] = simple_desk_command(0x21);
+pub const SAVE_DOWN_LIMIT: [u8; 6] = simple_desk_command(0x22);
+
+pub fn clear_limit(dir: Direction) -> Vec<u8> {
+    advanced_desk_command(
+        0x23,
+        &[match dir {
+            Direction::All => 0x0,
+            Direction::Up => 0x1,
+            Direction::Down => 0x2,
+        }],
+    )
+}
 
 pub const SAVE_MEMORY_3: [u8; 6] = simple_desk_command(0x25);
 pub const SAVE_MEMORY_4: [u8; 6] = simple_desk_command(0x26);
@@ -73,6 +110,8 @@ pub fn set_memory_height(memory_location: u8, height_mm: u16) -> Vec<u8> {
     advanced_desk_command(0xad, &[memory_location, height_bytes[0], height_bytes[1]])
 }
 
+pub const HAND_OPERATE: [u8; 6] = simple_desk_command(0xfe);
+
 impl Command {
     pub(crate) fn payload(self) -> Cow<'static, [u8]> {
         match self {
@@ -90,7 +129,14 @@ impl Command {
             Command::FetchHeightValue => Cow::from(&FETCH_HEIGHT_VALUE),
             Command::FetchHeightRange => Cow::from(&FETCH_HEIGHT_RANGE),
             Command::GotoHeight { height_mm } => Cow::from(goto_height(height_mm)),
+            Command::LockInfo => Cow::from(lock_info()),
+            Command::SetMemoryClickMode { during_move } => {
+                Cow::from(set_memory_click_mode(if during_move { 1 } else { 0 }))
+            }
             Command::FetchHighLowLimit => Cow::from(&FETCH_HIGH_LOW_LIMIT),
+            Command::SaveUpLimit => Cow::from(&SAVE_UP_LIMIT),
+            Command::SaveDownLimit => Cow::from(&SAVE_DOWN_LIMIT),
+            Command::ClearLimit { direction } => Cow::from(clear_limit(direction)),
             Command::Patch => Cow::from(&PATCH),
             Command::FetchStandTime => Cow::from(&FETCH_STAND_TIME),
             Command::FetchAllTime => Cow::from(&FETCH_ALL_TIME),
@@ -98,6 +144,7 @@ impl Command {
                 memory_location,
                 height_mm,
             } => Cow::from(set_memory_height(memory_location, height_mm)),
+            Command::HandOperate => Cow::from(&HAND_OPERATE),
             Command::Unknown { cmd, data } => Cow::from(advanced_desk_command(cmd, data)),
         }
     }

@@ -27,8 +27,8 @@ const HEIGHT_MIN_CODE: u8 = 0x22;
 pub enum Message {
     Height(u16),
     PhysicalLimits { min: u16, max: u16 },
-    HeightUnit(HeightUnit),
-    LimitedStatus, // TODO this has more data but it's unused
+    HeightUnit { unit: HeightUnit },
+    LimitedStatus { status: LimitedDirection },
     Unknown { code: u8, data: Vec<u8> },
 }
 
@@ -36,6 +36,14 @@ pub enum Message {
 pub enum HeightUnit {
     Cm,
     Inch,
+}
+
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+pub enum LimitedDirection {
+    All,
+    Up,
+    Down,
+    None,
 }
 
 impl Message {
@@ -64,8 +72,8 @@ fn parse_message_data(initial_i: &[u8]) -> IResult<&[u8], Message> {
 
     let message = match cmd {
         HEIGHT_CODE => parse_height_message(data)?,
-        HEIGHT_UNIT_CODE => parse_height_unit_message(data)?,
         PHYSICAL_LIMITS_CODE => parse_physical_limits_message(data)?,
+        HEIGHT_UNIT_CODE => parse_height_unit_message(data)?,
         LIMITED_STATUS_CODE => parse_limited_status_message(data)?,
         _ => Message::Unknown {
             code: cmd,
@@ -86,13 +94,13 @@ fn parse_height_message(data: &[u8]) -> NomResult<'_, Message> {
 }
 
 fn parse_height_unit_message(data: &[u8]) -> NomResult<'_, Message> {
-    let (_, height_unit) = alt((
+    let (_, unit) = alt((
         tag([0x00].as_ref()).map(|_| HeightUnit::Cm),
         tag([0x01].as_ref()).map(|_| HeightUnit::Inch),
     ))
     .parse(data)?;
 
-    Ok(Message::HeightUnit(height_unit))
+    Ok(Message::HeightUnit { unit })
 }
 
 fn parse_physical_limits_message(data: &[u8]) -> NomResult<'_, Message> {
@@ -105,9 +113,15 @@ fn parse_physical_limits_message(data: &[u8]) -> NomResult<'_, Message> {
 }
 
 fn parse_limited_status_message(data: &[u8]) -> NomResult<'_, Message> {
-    let (_, _status) = take(1usize)(data)?;
+    let (_, status) = alt((
+        tag([0x00].as_ref()).map(|_| LimitedDirection::None),
+        tag([0x01].as_ref()).map(|_| LimitedDirection::Up),
+        tag([0x10].as_ref()).map(|_| LimitedDirection::Down),
+        tag([0x11].as_ref()).map(|_| LimitedDirection::All),
+    ))
+    .parse(data)?;
 
-    Ok(Message::LimitedStatus)
+    Ok(Message::LimitedStatus { status })
 }
 
 impl Debug for Message {
@@ -124,14 +138,15 @@ impl Debug for Message {
                 .field(min)
                 .field(max)
                 .finish(),
-            Message::HeightUnit(unit) => f
+            Message::HeightUnit { unit } => f
                 .debug_tuple("HeightUnit")
                 .field(&format_hex(HEIGHT_UNIT_CODE))
                 .field(unit)
                 .finish(),
-            Message::LimitedStatus => f
-                .debug_tuple("LimitedStatus")
-                .field(&format_hex(LIMITED_STATUS_CODE))
+            Message::LimitedStatus { status } => f
+                .debug_struct("LimitedStatus")
+                .field("code", &format_hex(LIMITED_STATUS_CODE))
+                .field("status", &status)
                 .finish(),
             Message::Unknown { code, data } => f
                 .debug_struct("Unknown")
@@ -173,7 +188,12 @@ mod tests {
         ];
         let (i, result) = Message::parse(&data).unwrap();
         assert_eq!(i.len(), 0);
-        assert_eq!(result, vec![Message::HeightUnit(HeightUnit::Cm)]);
+        assert_eq!(
+            result,
+            vec![Message::HeightUnit {
+                unit: HeightUnit::Cm
+            }]
+        );
         let data = [
             0xf2,
             0xf2,
@@ -185,7 +205,12 @@ mod tests {
         ];
         let (i, result) = Message::parse(&data).unwrap();
         assert_eq!(i.len(), 0);
-        assert_eq!(result, vec![Message::HeightUnit(HeightUnit::Inch)]);
+        assert_eq!(
+            result,
+            vec![Message::HeightUnit {
+                unit: HeightUnit::Inch
+            }]
+        );
     }
 
     #[test]

@@ -55,6 +55,10 @@ pub enum Commands {
     ForceStand,
     /// Retry the Toggle operation 5 times if the desk doesn't complete it
     ForceToggle,
+    /// Set the current height to the upper limit
+    SetUpperLimit,
+    /// Set the current height to the lower limit
+    SetLowerLimit,
     /// Listen for height changes
     Listen,
     /// Add a known desk to prioritize when connecting
