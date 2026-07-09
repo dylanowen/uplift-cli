@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 use uplift_cli::{Args, Commands, Config, format_height, load_conf, save_conf};
-use uplift_lib::{Command, LimitDirection, UpliftDeskScanner};
+use uplift_lib::{Command, LimitDirection, TouchMode, UpliftDeskScanner};
 
 use uom::si::f32::Length;
 use uom::si::length::inch;
@@ -168,14 +168,18 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
 async fn query(mut desk: UpliftDesk) -> anyhow::Result<()> {
     let subscription = desk.get_subscription().await?;
     let height = subscription.height().await?;
-    let limits = subscription.physical_limits();
     let touch_mode = subscription.touch_mode();
+    let touch_mode_warning = match touch_mode {
+        TouchMode::OneTouch => "",
+        TouchMode::Continuous => "\n\t⚠️ Change your desk to one touch mode to fully use this tool",
+    };
+    let limits = subscription.physical_limits();
     let limit_status = subscription.limited_status();
     let rssi = desk.rssi().await?;
     println!(
         "desk: {}\n\
                  height: {}\n\
-                 touch mode: {touch_mode:?}\n\
+                 touch mode: {touch_mode:?}{touch_mode_warning}\n\
                  physical min limit: {:?}\n\
                  physical max limit: {:?}\n\
                  limited status: {limit_status:?}\n\
