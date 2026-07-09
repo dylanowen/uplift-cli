@@ -1,0 +1,47 @@
+[package]
+name = "uplift-lib"
+version = "0.0.1"
+authors = ["Dylan Owen <dyltotheo@gmail.com>"]
+description = "Rust library for controlling Uplift standing desks via Bluetooth"
+license = "MPL-2.0"
+homepage = "https://github.com/dylanowen/uplift-cli"
+repository = "https://github.com/dylanowen/uplift-cli"
+edition = "2024"
+
+[lib]
+
+[features]
+serde = ["dep:serde", "btleplug/serde", "dep:rmp-serde", "dep:serde_json"]
+sqlx = ["dep:sqlx", "dep:rmp-serde", "serde"]
+
+[dependencies]
+
+# Bluetooth support
+btleplug.workspace = true
+uuid.workspace = true
+
+# async
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio-stream.workspace = true
+futures.workspace = true
+
+# Units
+uom = { workspace = true, features = ["f32", "si", "std"] }
+
+# Parsing
+nom = "8"
+
+serde = { workspace = true, features = ["derive"], optional = true }
+
+sqlx = { version = "0.9", optional = true }
+rmp-serde = { version = "1.3", optional = true }
+serde_json = { version = "1", optional = true }
+
+either = "1.13"
+
+log.workspace = true
+
+[dev-dependencies]
+async-trait = "0.1"
+mockall = "0.13"
+tokio = { workspace = true, features = ["rt-multi-thread"] }

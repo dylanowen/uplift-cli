@@ -1,0 +1,320 @@
+use anyhow::{Context, anyhow};
+use btleplug::api::Manager as _;
+use btleplug::platform::{Adapter, Manager};
+use clap::Parser;
+use futures::StreamExt;
+use log::trace;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time::{Instant, sleep, timeout, timeout_at};
+use uplift_cli::{Args, Commands, Config, format_height, load_conf, save_conf};
+use uplift_lib::{Command, LimitDirection, TouchMode, UpliftDeskScanner};
+
+use uom::si::f32::Length;
+use uom::si::length::inch;
+use uplift_lib::{UpliftDesk, UpliftDeskId};
+
+const FORCE_ATTEMPTS: usize = 20;
+const SCAN_TIMEOUT: Duration = Duration::from_secs(2);
+const PACKET_DELAY: Duration = Duration::from_millis(200);
+
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
+    let args = Args::parse();
+    setup_logging(&args)?;
+
+    let conf = load_conf();
+
+    let timeout_duration = Duration::from_secs(args.timeout);
+
+    let runner = run_command(conf, args);
+    if !timeout_duration.is_zero() {
+        timeout(timeout_duration, runner)
+            .await
+            .context("Operation timed out")??;
+    } else {
+        runner.await?;
+    }
+
+    Ok(())
+}
+
+async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> {
+    let manager = Manager::new().await?;
+
+    let adapters = manager.adapters().await?;
+    let adapter = adapters
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("No adapters found"))?;
+
+    let mut desk = choose_desk(&conf, adapter.clone(), args.desk).await?;
+
+    desk.connect().await?;
+
+    match args.command {
+        Commands::Query => {
+            query(desk).await?;
+        }
+        Commands::Sit { save } => {
+            if save {
+                desk.command(Command::SaveSit).await?;
+
+                // let the packet actually send
+                sleep(PACKET_DELAY).await;
+
+                let height = desk.height().await?;
+                conf.sit_height = height;
+                save_conf(&conf)?;
+
+                println!("Saved sitting height @ {:.1}", format_height(height));
+            } else {
+                desk.command_retry(Command::GotoSit).await?;
+            }
+        }
+        Commands::Stand { save } => {
+            if save {
+                desk.command_retry(Command::SaveStand).await?;
+
+                let height = desk.height().await?;
+                conf.stand_height = height;
+                save_conf(&conf)?;
+
+                println!("Saved standing height @ {:.1}", format_height(height));
+            } else {
+                desk.command_retry(Command::GotoStand).await?;
+            }
+        }
+        Commands::ForceSit => {
+            force(Command::GotoSit, conf.sit_height, &mut desk).await?;
+        }
+        Commands::ForceStand => {
+            force(Command::GotoStand, conf.stand_height, &mut desk).await?;
+        }
+        Commands::Toggle => {
+            let height = desk.height().await?;
+
+            let mid = (conf.stand_height + conf.sit_height) / 2.;
+
+            if height > mid {
+                desk.command_retry(Command::GotoSit).await?;
+            } else {
+                desk.command_retry(Command::GotoStand).await?;
+            }
+
+            // let the packet actually send
+            sleep(PACKET_DELAY).await;
+        }
+        Commands::ForceToggle => {
+            let height = desk.height().await?;
+
+            let mid = (conf.stand_height + conf.sit_height) / 2.;
+
+            if height > mid {
+                force(Command::GotoSit, conf.sit_height, &mut desk).await?;
+            } else {
+                force(Command::GotoStand, conf.stand_height, &mut desk).await?;
+            }
+        }
+        Commands::SetUpperLimit => {
+            desk.command_retry(Command::SaveUpLimit).await?;
+
+            query(desk).await?;
+        }
+        Commands::SetLowerLimit => {
+            desk.command_retry(Command::SaveDownLimit).await?;
+
+            query(desk).await?;
+        }
+        Commands::ClearUpperLimit => {
+            desk.command_retry(Command::ClearLimit {
+                direction: LimitDirection::Upper,
+            })
+            .await?;
+
+            query(desk).await?;
+        }
+        Commands::ClearLowerLimit => {
+            desk.command_retry(Command::ClearLimit {
+                direction: LimitDirection::Lower,
+            })
+            .await?;
+
+            query(desk).await?;
+        }
+        Commands::Listen => {
+            let mut heights = desk.height_stream().await?;
+            loop {
+                if let Some(height) = heights.next().await {
+                    trace!("Height {:.1}", format_height(height));
+                } else {
+                    return Err(anyhow!("Height stream disconnected"));
+                }
+            }
+        }
+        Commands::AddKnownDesk { desk } => {
+            conf.known_desks.insert(desk);
+            save_conf(&conf)?;
+        }
+        Commands::RemoveKnownDesk { desk } => {
+            conf.known_desks.remove(&desk);
+            save_conf(&conf)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn query(mut desk: UpliftDesk) -> anyhow::Result<()> {
+    let subscription = desk.get_subscription().await?;
+    let height = subscription.height().await?;
+    let touch_mode = subscription.touch_mode();
+    let touch_mode_warning = match touch_mode {
+        TouchMode::OneTouch => "",
+        TouchMode::Continuous => "\n\t⚠️ Change your desk to one touch mode to fully use this tool",
+    };
+    let limits = subscription.physical_limits();
+    let limit_status = subscription.limited_status();
+    let rssi = desk.rssi().await?;
+    println!(
+        "desk: {}\n\
+                 height: {}\n\
+                 touch mode: {touch_mode:?}{touch_mode_warning}\n\
+                 physical min limit: {:?}\n\
+                 physical max limit: {:?}\n\
+                 limited status: {limit_status:?}\n\
+                 rssi: {rssi:?}",
+        desk.id(),
+        format_height(height),
+        limits.map(|l| format_height(l.0)),
+        limits.map(|l| format_height(l.1)),
+    );
+
+    Ok(())
+}
+
+async fn force(command: Command, goal: Length, desk: &mut UpliftDesk) -> anyhow::Result<()> {
+    const HEIGHT_STREAM_TIMEOUT: Duration = Duration::from_secs(1);
+    let height_tolerance: Length = Length::new::<inch>(1.);
+
+    let mut attempts = 0;
+    let mut previous_height = desk.height().await?;
+
+    let mut heights = desk.height_stream().await?;
+    while attempts < FORCE_ATTEMPTS {
+        attempts += 1;
+        trace!("Running forced attempt {attempts}");
+        desk.command(command).await?;
+
+        sleep(PACKET_DELAY).await;
+
+        'query_height: loop {
+            if let Ok(Some(next_height)) = timeout(HEIGHT_STREAM_TIMEOUT, heights.next()).await {
+                trace!(
+                    "Height moved from: {:.1} -> {:.1}",
+                    format_height(previous_height),
+                    format_height(next_height)
+                );
+
+                if previous_height == next_height {
+                    // we've stopped moving so check our height
+                    if (goal - next_height).abs() <= height_tolerance {
+                        return Ok(());
+                    } else {
+                        break 'query_height;
+                    }
+                } else {
+                    previous_height = next_height;
+                }
+            } else {
+                break 'query_height;
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "Failed to force the desk to the intended height after {attempts} attempts"
+    ))
+}
+
+async fn choose_desk(
+    conf: &Config,
+    adapter: Adapter,
+    desk_uuid: Option<UpliftDeskId>,
+) -> Result<UpliftDesk, anyhow::Error> {
+    let mut scanner = UpliftDeskScanner::new(adapter).await?;
+    let deadline = Instant::now() + SCAN_TIMEOUT;
+
+    if let Some(desk_uuid) = desk_uuid {
+        loop {
+            match timeout_at(deadline, scanner.next()).await {
+                Ok(Some(desk)) if desk_uuid == desk.id() => {
+                    return Ok(desk);
+                }
+                Ok(Some(_)) => continue,
+                _ => {
+                    return Err(anyhow!("Timed out waiting for desk: {desk_uuid:?}"));
+                }
+            }
+        }
+    } else {
+        let mut desks = HashMap::new();
+        while let Ok(Some(desk)) = timeout_at(deadline, scanner.next()).await {
+            // TODO this won't support 2 known desks close to each other
+            if conf.known_desks.contains(&desk.id()) {
+                return Ok(desk);
+            }
+
+            desks.insert(desk.id(), desk);
+        }
+
+        if desks.len() > 1 {
+            async fn get_rssi(desk: &mut UpliftDesk) -> i16 {
+                async fn inner(desk: &mut UpliftDesk) -> btleplug::Result<i16> {
+                    desk.connect().await?;
+                    desk.rssi().await?.ok_or(btleplug::Error::NotConnected)
+                }
+                let result = inner(desk).await.unwrap_or(i16::MIN);
+                let _ = desk.disconnect().await;
+                result
+            }
+
+            let mut iter = desks.into_values();
+            let mut desk = iter.next().unwrap();
+            let mut rssi = get_rssi(&mut desk).await;
+            trace!("{:?} @ rssi: {rssi}", desk.id());
+            for mut next_desk in iter {
+                let next_rssi = get_rssi(&mut next_desk).await;
+                trace!("{:?} @ rssi: {next_rssi}", next_desk.id());
+                if next_rssi > rssi {
+                    rssi = next_rssi;
+                    desk = next_desk;
+                }
+            }
+
+            trace!("Chosen desk: {:?}", desk.id());
+
+            // let everything cool down after all the connecting
+            sleep(Duration::from_secs(1)).await;
+
+            Ok(desk)
+        } else {
+            desks
+                .into_values()
+                .next()
+                .ok_or_else(|| anyhow!("No desk found"))
+        }
+    }
+}
+
+fn setup_logging(args: &Args) -> Result<(), anyhow::Error> {
+    let mut builder = env_logger::Builder::new();
+    builder.parse_filters(&args.log_level);
+    // builder.filter_module("uplift_lib", log::LevelFilter::Trace);
+
+    if let Some(s) = &args.log_style {
+        builder.parse_write_style(s);
+    }
+
+    builder.try_init().context("Failed to setup logger")
+}

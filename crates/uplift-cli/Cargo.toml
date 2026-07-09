@@ -1,0 +1,38 @@
+[package]
+name = "uplift-cli"
+version = "0.5.0"
+authors = ["Dylan Owen <dyltotheo@gmail.com>"]
+description = "CLI for controlling Uplift standing desks via Bluetooth"
+readme = "Readme.md"
+license = "MPL-2.0"
+homepage = "https://github.com/dylanowen/uplift-cli"
+repository = "https://github.com/dylanowen/uplift-cli"
+edition = "2024"
+
+[[bin]]
+name = "uplift"
+path = "src/main.rs"
+
+[dependencies]
+uplift-lib = { path = "../uplift-lib", version = "0.0.1", features = ["serde"] }
+
+# Bluetooth support
+btleplug.workspace = true
+uuid.workspace = true
+
+# async
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+futures.workspace = true
+
+# Units
+uom = { workspace = true, features = ["serde"] }
+
+clap = { version = "4.6", features = ["derive", "env"] }
+confy = "2.0"
+serde = { workspace = true, features = ["derive"] }
+
+# Error handling
+anyhow = "1.0"
+
+env_logger.workspace = true
+log.workspace = true
