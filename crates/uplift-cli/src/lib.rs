@@ -59,6 +59,10 @@ pub enum Commands {
     SetUpperLimit,
     /// Set the current height to the lower limit
     SetLowerLimit,
+    /// Clear the desk's lower limit
+    ClearUpperLimit,
+    /// Clear the desk's upper limit
+    ClearLowerLimit,
     /// Listen for height changes
     Listen,
     /// Add a known desk to prioritize when connecting

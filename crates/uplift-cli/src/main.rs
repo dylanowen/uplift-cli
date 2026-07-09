@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 use uplift_cli::{Args, Commands, Config, format_height, load_conf, save_conf};
-use uplift_lib::{Command, UpliftDeskScanner};
+use uplift_lib::{Command, LimitDirection, UpliftDeskScanner};
 
 use uom::si::f32::Length;
 use uom::si::length::inch;
@@ -54,22 +54,7 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
 
     match args.command {
         Commands::Query => {
-            let height = desk.height().await?;
-            let limits = desk.physical_limits().await?;
-            let limit_status = desk.limited_status().await?;
-            let rssi = desk.rssi().await?;
-            println!(
-                "desk: {}\n\
-                 height: {}\n\
-                 physical min limit: {:?}\n\
-                 physical max limit: {:?}\n\
-                 limited status: {limit_status:?}\n\
-                 rssi: {rssi:?}",
-                desk.id(),
-                format_height(height),
-                limits.map(|l| format_height(l.0)),
-                limits.map(|l| format_height(l.1)),
-            );
+            query(desk).await?;
         }
         Commands::Sit { save } => {
             if save {
@@ -84,18 +69,12 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
 
                 println!("Saved sitting height @ {:.1}", format_height(height));
             } else {
-                desk.command(Command::GotoSit).await?;
-
-                // let the packet actually send
-                sleep(PACKET_DELAY).await;
+                desk.command_retry(Command::GotoSit).await?;
             }
         }
         Commands::Stand { save } => {
             if save {
-                desk.command(Command::SaveStand).await?;
-
-                // let the packet actually send
-                sleep(PACKET_DELAY).await;
+                desk.command_retry(Command::SaveStand).await?;
 
                 let height = desk.height().await?;
                 conf.stand_height = height;
@@ -103,10 +82,7 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
 
                 println!("Saved standing height @ {:.1}", format_height(height));
             } else {
-                desk.command(Command::GotoStand).await?;
-
-                // let the packet actually send
-                sleep(PACKET_DELAY).await;
+                desk.command_retry(Command::GotoStand).await?;
             }
         }
         Commands::ForceSit => {
@@ -121,9 +97,9 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
             let mid = (conf.stand_height + conf.sit_height) / 2.;
 
             if height > mid {
-                desk.command(Command::GotoSit).await?;
+                desk.command_retry(Command::GotoSit).await?;
             } else {
-                desk.command(Command::GotoStand).await?;
+                desk.command_retry(Command::GotoStand).await?;
             }
 
             // let the packet actually send
@@ -141,16 +117,30 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
             }
         }
         Commands::SetUpperLimit => {
-            desk.command(Command::SaveUpLimit).await?;
+            desk.command_retry(Command::SaveUpLimit).await?;
 
-            // let the packet actually send
-            sleep(PACKET_DELAY).await;
+            query(desk).await?;
         }
         Commands::SetLowerLimit => {
-            desk.command(Command::SaveDownLimit).await?;
+            desk.command_retry(Command::SaveDownLimit).await?;
 
-            // let the packet actually send
-            sleep(PACKET_DELAY).await;
+            query(desk).await?;
+        }
+        Commands::ClearUpperLimit => {
+            desk.command_retry(Command::ClearLimit {
+                direction: LimitDirection::Upper,
+            })
+            .await?;
+
+            query(desk).await?;
+        }
+        Commands::ClearLowerLimit => {
+            desk.command_retry(Command::ClearLimit {
+                direction: LimitDirection::Lower,
+            })
+            .await?;
+
+            query(desk).await?;
         }
         Commands::Listen => {
             let mut heights = desk.height_stream().await?;
@@ -175,7 +165,31 @@ async fn run_command(mut conf: Config, args: Args) -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-async fn force(command: Command, goal: Length, desk: &mut UpliftDesk) -> Result<(), anyhow::Error> {
+async fn query(mut desk: UpliftDesk) -> anyhow::Result<()> {
+    let subscription = desk.get_subscription().await?;
+    let height = subscription.height().await?;
+    let limits = subscription.physical_limits();
+    let touch_mode = subscription.touch_mode();
+    let limit_status = subscription.limited_status();
+    let rssi = desk.rssi().await?;
+    println!(
+        "desk: {}\n\
+                 height: {}\n\
+                 touch mode: {touch_mode:?}\n\
+                 physical min limit: {:?}\n\
+                 physical max limit: {:?}\n\
+                 limited status: {limit_status:?}\n\
+                 rssi: {rssi:?}",
+        desk.id(),
+        format_height(height),
+        limits.map(|l| format_height(l.0)),
+        limits.map(|l| format_height(l.1)),
+    );
+
+    Ok(())
+}
+
+async fn force(command: Command, goal: Length, desk: &mut UpliftDesk) -> anyhow::Result<()> {
     const HEIGHT_STREAM_TIMEOUT: Duration = Duration::from_secs(1);
     let height_tolerance: Length = Length::new::<inch>(1.);
 
@@ -240,17 +254,14 @@ async fn choose_desk(
             }
         }
     } else {
-        // this "works" and is WAAAY faster but could just select the wrong desk
-        // scanner.next().await.ok_or_else(|| anyhow!("No desk found"))
-
         let mut desks = HashMap::new();
         while let Ok(Some(desk)) = timeout_at(deadline, scanner.next()).await {
-            desks.insert(desk.id(), desk);
-        }
+            // TODO this won't support 2 known desks close to each other
+            if conf.known_desks.contains(&desk.id()) {
+                return Ok(desk);
+            }
 
-        // if we're choosing across multiple desks prioritize known desks (if there are any)
-        if desks.len() > 1 && desks.keys().any(|id| conf.known_desks.contains(id)) {
-            desks.retain(|id, _| conf.known_desks.contains(id))
+            desks.insert(desk.id(), desk);
         }
 
         if desks.len() > 1 {

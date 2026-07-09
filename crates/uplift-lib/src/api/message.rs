@@ -17,6 +17,7 @@ const ID_CODE: u8 = 0x0f; // not sure what this does but it seems to be related 
 const HEIGHT_UNIT_CODE: u8 = 0x0e;
 #[allow(dead_code)]
 const IA_CODE: u8 = 0x10; // Probably stores a height, maybe some minimum?
+const TOUCH_MODE_CODE: u8 = 0x19;
 const LIMITED_STATUS_CODE: u8 = 0x20;
 #[allow(dead_code)]
 const HEIGHT_MAX_CODE: u8 = 0x21;
@@ -28,6 +29,7 @@ pub enum Message {
     Height(u16),
     PhysicalLimits { min: u16, max: u16 },
     HeightUnit { unit: HeightUnit },
+    TouchMode { mode: TouchMode },
     LimitedStatus { status: LimitedDirection },
     Unknown { code: u8, data: Vec<u8> },
 }
@@ -39,10 +41,18 @@ pub enum HeightUnit {
 }
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+pub enum TouchMode {
+    /// You press the desk buttons once to move it
+    OneTouch,
+    /// You need to keep pressing the desk buttons to move it
+    Continuous,
+}
+
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum LimitedDirection {
     All,
-    Up,
-    Down,
+    Upper,
+    Lower,
     None,
 }
 
@@ -74,6 +84,7 @@ fn parse_message_data(initial_i: &[u8]) -> IResult<&[u8], Message> {
         HEIGHT_CODE => parse_height_message(data)?,
         PHYSICAL_LIMITS_CODE => parse_physical_limits_message(data)?,
         HEIGHT_UNIT_CODE => parse_height_unit_message(data)?,
+        TOUCH_MODE_CODE => parse_touch_mode_message(data)?,
         LIMITED_STATUS_CODE => parse_limited_status_message(data)?,
         _ => Message::Unknown {
             code: cmd,
@@ -112,11 +123,21 @@ fn parse_physical_limits_message(data: &[u8]) -> NomResult<'_, Message> {
     Ok(Message::PhysicalLimits { min, max })
 }
 
+fn parse_touch_mode_message(data: &[u8]) -> NomResult<'_, Message> {
+    let (_, mode) = alt((
+        tag([0x0].as_ref()).map(|_| TouchMode::OneTouch),
+        tag([0x1].as_ref()).map(|_| TouchMode::Continuous),
+    ))
+    .parse(data)?;
+
+    Ok(Message::TouchMode { mode })
+}
+
 fn parse_limited_status_message(data: &[u8]) -> NomResult<'_, Message> {
     let (_, status) = alt((
         tag([0x00].as_ref()).map(|_| LimitedDirection::None),
-        tag([0x01].as_ref()).map(|_| LimitedDirection::Up),
-        tag([0x10].as_ref()).map(|_| LimitedDirection::Down),
+        tag([0x01].as_ref()).map(|_| LimitedDirection::Upper),
+        tag([0x10].as_ref()).map(|_| LimitedDirection::Lower),
         tag([0x11].as_ref()).map(|_| LimitedDirection::All),
     ))
     .parse(data)?;
@@ -142,6 +163,11 @@ impl Debug for Message {
                 .debug_tuple("HeightUnit")
                 .field(&format_hex(HEIGHT_UNIT_CODE))
                 .field(unit)
+                .finish(),
+            Message::TouchMode { mode } => f
+                .debug_struct("TouchMode")
+                .field("code", &format_hex(TOUCH_MODE_CODE))
+                .field("mode", &mode)
                 .finish(),
             Message::LimitedStatus { status } => f
                 .debug_struct("LimitedStatus")

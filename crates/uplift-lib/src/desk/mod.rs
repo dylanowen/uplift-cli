@@ -9,9 +9,13 @@ use either::Either;
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 use std::mem;
+use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio::time::sleep;
 use tokio_stream::Stream;
 use uom::si::f32::Length;
+
+const RETRY_DELAY: Duration = Duration::from_millis(800);
 
 #[allow(clippy::large_enum_variant)]
 pub enum UpliftDesk<P: Peripheral + 'static = platform::Peripheral> {
@@ -120,20 +124,30 @@ impl<P: Peripheral> UpliftDesk<P> {
         }
     }
 
+    pub async fn command_retry(&self, command: Command) -> Result<()> {
+        self.command(command).await?;
+
+        sleep(RETRY_DELAY).await;
+
+        self.command(command).await?;
+
+        Ok(())
+    }
+
     pub async fn height(&mut self) -> Result<Length> {
-        self.get_subscription().await?.get_height().await
+        self.get_subscription().await?.height().await
     }
 
     pub async fn physical_limits(&mut self) -> Result<Option<(Length, Length)>> {
-        Ok(self.get_subscription().await?.get_physical_limits())
+        Ok(self.get_subscription().await?.physical_limits())
     }
 
     pub async fn height_unit(&mut self) -> Result<HeightUnit> {
-        Ok(self.get_subscription().await?.get_height_unit())
+        Ok(self.get_subscription().await?.height_unit())
     }
 
     pub async fn limited_status(&mut self) -> Result<LimitedDirection> {
-        Ok(self.get_subscription().await?.get_limited_status())
+        Ok(self.get_subscription().await?.limited_status())
     }
 
     pub async fn height_stream(&mut self) -> Result<impl Stream<Item = Length> + use<P>> {
@@ -163,7 +177,7 @@ impl<P: Peripheral> UpliftDesk<P> {
         Ok(())
     }
 
-    async fn get_subscription(&mut self) -> Result<&DeskSubscription<P>> {
+    pub async fn get_subscription(&mut self) -> Result<&DeskSubscription<P>> {
         match self {
             UpliftDesk::Connected {
                 peripheral,

@@ -1,5 +1,5 @@
-use crate::LimitedDirection;
 use crate::api::{Command, EnhancedPeripheral as _, HeightUnit, Message};
+use crate::{LimitedDirection, TouchMode};
 use btleplug::Error;
 use btleplug::api::{Characteristic, Peripheral, ValueNotification, WriteType};
 use btleplug::platform::PeripheralId;
@@ -19,6 +19,7 @@ pub struct DeskSubscription<P: Peripheral> {
     height_rx: watch::Receiver<Option<u16>>,
     physical_limits_rx: watch::Receiver<Option<(u16, u16)>>,
     height_unit_rx: watch::Receiver<HeightUnit>,
+    touch_mode_rx: watch::Receiver<TouchMode>,
     limited_status_rx: watch::Receiver<LimitedDirection>,
     data_in_characteristic: Characteristic,
     peripheral: P,
@@ -32,8 +33,8 @@ pub struct DeskSubscription<P: Peripheral> {
 /// t:600  [Command::FetchHeightValue]
 /// t:700  [Command::FetchHeightRange]
 /// t:?    [Command::LockInfo]
-/// t:?    [Command::HandOperate]
-/// t:1100 [Command::HandOperate]
+/// t:?    [Command::Handshake]
+/// t:1100 [Command::Handshake]
 impl<P: Peripheral + 'static> DeskSubscription<P> {
     pub(super) async fn new(
         id: PeripheralId,
@@ -46,6 +47,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         let (physical_limits_tx, physical_limits_rx) = watch::channel(None);
         // The app seems to default to inches
         let (height_unit_tx, height_unit_rx) = watch::channel(HeightUnit::Inch);
+        let (touch_mode_tx, touch_mode_rx) = watch::channel(TouchMode::Continuous);
         let (limited_status_tx, limited_status_rx) = watch::channel(LimitedDirection::None);
 
         let receiver = peripheral.notifications().await?;
@@ -59,10 +61,12 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
                 // The app specifically sleeps for 100ms between commands
                 let mut interval = time::interval(Duration::from_millis(100));
                 for cmd in [
+                    Command::Handshake,
                     Command::FetchHighLowLimit,
                     Command::FetchHighLowLimit,
                     Command::FetchHeightRange,
                     Command::FetchHeightValue,
+                    Command::Handshake,
                 ] {
                     interval.tick().await;
                     if let Err(e) = peripheral
@@ -84,6 +88,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
                     height_tx,
                     physical_limits_tx,
                     height_unit_tx,
+                    touch_mode_tx,
                     limited_status_tx,
                     cancel_rx,
                     data_out_characteristic,
@@ -103,6 +108,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
             height_rx,
             physical_limits_rx,
             height_unit_rx,
+            touch_mode_rx,
             limited_status_rx,
             data_in_characteristic,
             peripheral,
@@ -110,7 +116,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         })
     }
 
-    pub(super) fn get_height(&self) -> impl Future<Output = btleplug::Result<Length>> + 'static {
+    pub fn height(&self) -> impl Future<Output = btleplug::Result<Length>> + 'static {
         let unit_watch = self.height_unit_rx.clone();
         let height_future = self.wait_for_some_height();
         async move {
@@ -121,7 +127,7 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         }
     }
 
-    pub(super) fn get_physical_limits(&self) -> Option<(Length, Length)> {
+    pub fn physical_limits(&self) -> Option<(Length, Length)> {
         let (min, max) = (*self.physical_limits_rx.borrow())?;
         Some((
             // For some reason these units don't match the reported unit?
@@ -130,12 +136,15 @@ impl<P: Peripheral + 'static> DeskSubscription<P> {
         ))
     }
 
-    pub(super) fn get_height_unit(&self) -> HeightUnit {
-        // I don't know how to ask the desk for this info
+    pub fn height_unit(&self) -> HeightUnit {
         *self.height_unit_rx.borrow()
     }
 
-    pub(super) fn get_limited_status(&self) -> LimitedDirection {
+    pub fn touch_mode(&self) -> TouchMode {
+        *self.touch_mode_rx.borrow()
+    }
+
+    pub fn limited_status(&self) -> LimitedDirection {
         *self.limited_status_rx.borrow()
     }
 
@@ -176,6 +185,7 @@ async fn subscription_main_loop<R, P>(
     height_tx: watch::Sender<Option<u16>>,
     physical_limits_tx: watch::Sender<Option<(u16, u16)>>,
     height_unit_tx: watch::Sender<HeightUnit>,
+    touch_mode_tx: watch::Sender<TouchMode>,
     limited_status_tx: watch::Sender<LimitedDirection>,
     mut cancel_rx: oneshot::Receiver<()>,
     data_out_characteristic: Characteristic,
@@ -209,6 +219,9 @@ where
                                         }
                                         Message::HeightUnit { unit } => {
                                             height_unit_tx.send(unit).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
+                                        }
+                                        Message::TouchMode{ mode } => {
+                                             touch_mode_tx.send(mode).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;
                                         }
                                         Message::LimitedStatus { status } => {
                                             limited_status_tx.send(status).map_err(|_| Error::RuntimeError("Couldn't send latest value".to_string()))?;

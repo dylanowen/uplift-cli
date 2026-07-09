@@ -32,20 +32,20 @@ pub enum Command {
     FetchHighLowLimit,
     SaveUpLimit,
     SaveDownLimit,
-    ClearLimit { direction: Direction },
+    ClearLimit { direction: LimitDirection },
     Patch,
     FetchStandTime,
     FetchAllTime,
     SetMemoryHeight { memory_location: u8, height_mm: u16 },
-    HandOperate,
+    Handshake,
     Unknown { cmd: u8, data: &'static [u8] },
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum Direction {
+pub enum LimitDirection {
     All,
-    Up,
-    Down,
+    Upper,
+    Lower,
 }
 
 pub const UP: [u8; 6] = simple_desk_command(0x01);
@@ -80,13 +80,13 @@ pub const FETCH_HIGH_LOW_LIMIT: [u8; 6] = simple_desk_command(0x20);
 pub const SAVE_UP_LIMIT: [u8; 6] = simple_desk_command(0x21);
 pub const SAVE_DOWN_LIMIT: [u8; 6] = simple_desk_command(0x22);
 
-pub fn clear_limit(dir: Direction) -> Vec<u8> {
+pub fn clear_limit(dir: LimitDirection) -> Vec<u8> {
     advanced_desk_command(
         0x23,
         &[match dir {
-            Direction::All => 0x0,
-            Direction::Up => 0x1,
-            Direction::Down => 0x2,
+            LimitDirection::All => 0x0,
+            LimitDirection::Upper => 0x1,
+            LimitDirection::Lower => 0x2,
         }],
     )
 }
@@ -110,7 +110,7 @@ pub fn set_memory_height(memory_location: u8, height_mm: u16) -> Vec<u8> {
     advanced_desk_command(0xad, &[memory_location, height_bytes[0], height_bytes[1]])
 }
 
-pub const HAND_OPERATE: [u8; 6] = simple_desk_command(0xfe);
+pub const HANDSHAKE: [u8; 6] = simple_desk_command(0xfe);
 
 impl Command {
     pub(crate) fn payload(self) -> Cow<'static, [u8]> {
@@ -144,7 +144,7 @@ impl Command {
                 memory_location,
                 height_mm,
             } => Cow::from(set_memory_height(memory_location, height_mm)),
-            Command::HandOperate => Cow::from(&HAND_OPERATE),
+            Command::Handshake => Cow::from(&HANDSHAKE),
             Command::Unknown { cmd, data } => Cow::from(advanced_desk_command(cmd, data)),
         }
     }
